@@ -125,6 +125,14 @@ class SystemTests(unittest.TestCase):
         self.assertEqual(report["outcome"], "unknown")
         self.assertEqual(self.ingest("OK (skipped=1)\n")["outcome"], "passed")
 
+    def test_ctest_zero_failures_is_healthy(self):
+        for line in ("100% tests passed, 0 tests failed out of 2", "2026-10-30T22:49:41.8738072Z 100% tests passed, 0 tests failed out of 2"):
+            with self.subTest(line=line):
+                report = self.ingest(line + "\n")
+                self.assertEqual((report["outcome"], report["errors"]), ("passed", 0))
+        self.assertEqual(self.ingest("50% tests passed, 1 tests failed out of 2\n")["outcome"], "failed")
+        self.assertEqual(self.ingest("FAILED tests/test_foo.py::test_bar\n")["outcome"], "failed")
+
     def test_success_requires_absence_of_errors(self):
         report = self.ingest("fatal error: missing file\n** BUILD SUCCEEDED **\n", "--exit-code", "0")
         self.assertEqual(report["outcome"], "failed")

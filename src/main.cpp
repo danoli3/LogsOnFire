@@ -259,8 +259,10 @@ const std::vector<Rule> &rules() {
             "stopped|make(?:\\[[0-9]+\\])?: \\*\\*\\*|MSBUILD : error|CMake Error|Process completed with exit code "
             "[1-9]|exited with (?:code|status) [1-9]")},
         {"test.failed", "error",
-         rx("(?:^|[[:space:]])FAIL(?:ED)?(?:[ :]|$)|[1-9][0-9]* (?:failed|failures|errors)(?:[, .]|$)|test case .+ "
-            "failed|The following tests FAILED")},
+         rx("(?:^|[[:space:]])FAIL(?:ED)?[[:space:]]*:|"
+            "(?:^|[[:space:]])FAIL(?:ED)?[[:space:]]+(?:test[_s/.][^[:space:]]*|\\((?:failures|errors)=)|"
+            "[1-9][0-9]* (?:tests? )?(?:failed|failures|errors)(?:[, .]|$)|test case .+ "
+            "failed|The following tests FAILED|^FAIL(?:ED)?$")},
         {"log.error", "error",
          rx("(?:^|[[:space:]:\\]])(?:ERROR|FATAL|CRITICAL)\\b[[:space:]]*[:\\]]|\\[(?:ERROR|FATAL|CRITICAL)\\]|\"(?:"
             "level|severity|"

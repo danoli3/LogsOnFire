@@ -35,6 +35,14 @@ The CI explanation was 51.2% smaller than the original log. The tiny crash repor
 grew because structured fields, interpretations, and evidence windows add overhead.
 This tool does not make every short log cheaper to read.
 
+A second measurement used the complete failed job log (257 lines), rather than
+the failed-step excerpt stored as a fixture. LogsOnFire reduced that captured
+21,008-byte input to a 2,325-byte explanation: **88.9% fewer bytes**. The useful
+assertion and failing test were still selected. The complete log can be fetched
+from the linked job with `gh api --allow-escape-sequences
+repos/danoli3/LogsOnFire/actions/jobs/124349806800/logs`; save its output as a text
+file and pass it to the same evaluation script.
+
 ## What helped in the real failure
 
 The explanation selected `AssertionError: -11 != 0` as the primary diagnostic and
@@ -52,6 +60,12 @@ test and packaging jobs.
 The evaluation also caught a misleading detector match against an echoed Python
 string containing `"error: "`. That match was removed, and a regression test now
 keeps echoed error text from displacing the actual assertion diagnostic.
+
+Checking a later successful job found another false positive: CTest's
+`100% tests passed, 0 tests failed` summary matched an overly broad failure rule.
+The rule now requires a failure label or a nonzero failure count, and regression
+coverage exercises both successful and failed CTest summaries. This illustrates
+why the success path needs evaluation against real logs too.
 
 ## What helped in the Apple fixture
 
