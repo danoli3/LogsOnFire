@@ -233,6 +233,11 @@ class SystemTests(unittest.TestCase):
         for value in ("private words", "secondsecret", "dXNlcjpwYXNz", "thirdvalue", "fourthvalue"):
             self.assertEqual(self.client.search(value)["items"], [], value)
 
+    def test_long_unicode_prefix_keeps_valid_diagnostic_json(self):
+        report = self.ingest("火" * 2000 + " error: late Unicode diagnostic\n")
+        self.assertIn("late Unicode diagnostic", report["top_issues"][0]["message"])
+        self.assertIn("火", self.client.explain()["findings"][0]["message"])
+
     def test_response_budget_and_pagination(self):
         report = self.ingest("".join(f"error: issue{i} " + "x" * 2000 + "\n" for i in range(100)))
         self.assertEqual(len(report["top_issues"]), 5)

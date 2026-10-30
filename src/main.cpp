@@ -657,7 +657,10 @@ long long ingest(Database &db, Args &a) {
                 issue.bind(3, rule.id);
                 // Keep the matching diagnostic visible even when a long command
                 // or structured prefix precedes it on the physical line.
-                const auto excerpt = position > 300 ? "..." + text.substr(position - 100) : text;
+                size_t excerpt_start = position > 300 ? position - 100 : 0;
+                while (excerpt_start && (static_cast<unsigned char>(text[excerpt_start]) & 0xc0) == 0x80)
+                    --excerpt_start;
+                const auto excerpt = excerpt_start ? "..." + text.substr(excerpt_start) : text;
                 issue.bind(4, clip(excerpt, 2000));
                 issue.bind(5, fingerprint(text));
                 issue.bind(6, total);
