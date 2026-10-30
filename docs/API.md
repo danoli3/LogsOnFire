@@ -46,6 +46,10 @@ An issue has `id`, `severity`, `rule`, `message`, `message_truncated`, `first_li
 Use context around individual endpoints; the full span is not necessarily one
 contiguous error block.
 
+Structured device/IDE findings may also contain `origin` with `system`,
+`priority`, `tag`, `pid`, and `tid`. PID/TID are strings, empty if unavailable.
+Logcat repetitions are scoped to PID/TID/tag. See [supported formats](FORMATS.md).
+
 ## Drop-in analysis and explanations
 
 `logsonfire analyze FILE` ingests a log and returns an explanation in one call.
@@ -62,6 +66,9 @@ For a primary crash finding, `crash_context` contains up to eight lines at a
 nearby crashed-thread or stack-trace header, selected from the next 200 physical
 lines. It is empty if no such header is found. As with ordinary explanation
 context, each line is clipped at 300 bytes with a truncation flag.
+
+Android crashes and Java nested causes also populate `crash_context` from nearby
+exception-chain lines. Logcat stack context excludes different PIDs.
 
 `analyze --human` and `explain --human` opt into readable terminal output. Other
 native operations remain JSON-only. Both analysis commands return 0 when the

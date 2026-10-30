@@ -1,0 +1,6 @@
+2026-10-31 12:00:00.100 [info] Extension host with pid 5678 started
+2026-10-31 12:00:01.100 [warning] [Extension Host] Extension scan took longer than expected
+2026-10-31 12:00:02.100 [error] [Extension Host] Activating extension 'example.language-tools' failed
+Error: Cannot find module './server.js'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1200:15)
+    at activate (/extensions/example.language-tools/extension.js:42:10)

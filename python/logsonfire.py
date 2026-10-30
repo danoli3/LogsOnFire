@@ -100,12 +100,13 @@ class Client:
     def search(self, text, source=None, **options):
         return self.query("search", source=source, text=text, **options)
 
-    def capture(self, command, *, name=None, quiet=False):
+    def capture(self, command, *, name=None, quiet=False, raw_sink=None):
         """Stream merged stdout/stderr into native ingestion, returning (exit_code, report).
 
         The completion file is written before closing stdin, so the parser can
         finish a single atomic transaction with the real process exit status.
-        No unredacted log file is created. Child output is relayed to stderr.
+        Default capture creates no raw log file. raw_sink optionally observes
+        original bytes for local accounting. Live output is relayed to stderr.
         """
         if not command:
             raise LogError("run requires a command after --")
@@ -121,6 +122,8 @@ class Client:
                     data = child.stdout.read1(65536)
                     if not data:
                         break
+                    if raw_sink is not None:
+                        raw_sink.write(data)
                     parser.stdin.write(data)
                     if not quiet:
                         sys.stderr.buffer.write(data)
@@ -290,8 +293,7 @@ def main(argv=None):
         return 130
 
 
-if __name__ == "__main__":
-    result = main()
+def exit_with_status(result):
     if os.name == "nt" and result > 0x7fffffff:
         # SystemExit converts through a signed C int. Preserve the full Windows
         # DWORD status when a captured process exits with an exception code.
@@ -302,3 +304,7 @@ if __name__ == "__main__":
         exit_process.argtypes = [ctypes.c_uint32]
         exit_process(result)
     sys.exit(result)
+
+
+if __name__ == "__main__":
+    exit_with_status(main())

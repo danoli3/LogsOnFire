@@ -1,0 +1,8 @@
+Android Studio diagnostic log (synthetic fixture)
+2026-10-31 12:00:00,100 [   1000]   INFO - #com.android.tools.idea.projectsystem - Starting Gradle sync
+2026-10-31 12:00:01,100 [   2000]   WARN - #com.android.tools.idea.gradle - Gradle daemon is busy
+2026-10-31 12:00:02,100 [   3000]  ERROR - #com.android.tools.idea.gradle - Gradle sync failed
+org.gradle.api.GradleException: Could not resolve project dependencies
+    at org.gradle.tooling.internal.consumer.Connection.run(Connection.java:120)
+Caused by: java.net.UnknownHostException: repo.example.invalid
+    at java.net.InetAddress.getAllByName(InetAddress.java:1000)

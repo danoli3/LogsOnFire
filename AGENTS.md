@@ -74,3 +74,23 @@ entire log into its context.
   Do not invent download URLs, hashes, publication status, or validation results.
 - Prepare reviewable release artifacts and manifests before publication. Report
   which operating systems were actually tested and which remain CI targets.
+
+## Local savings ledger
+
+- Keep accounting for log payloads replaced by LogsOnFire during development:
+
+  ```sh
+  python3 tools/savings.py run -- cmake --build build --config Release --parallel
+  python3 tools/savings.py run -- ctest --test-dir build -C Release --output-on-failure
+  python3 tools/savings.py totals
+  ```
+
+- Local data lives in `.logsonfire/savings.sqlite3`; the readable running report
+  is `.logsonfire/SAVINGS.md`. These files stay out of Git.
+- Use `analyze --kind benchmark FILE` for retrospective examples, synthetic
+  evaluations, or logs already read by the agent. Do not count those as avoided
+  reads. Use the returned savings session for tracked follow-up queries.
+- Count each raw log once and charge follow-ups. Preserve negative savings.
+  Identify the counter: default byte-based token estimates or an explicitly
+  selected reference tokenizer. Never describe these figures as measured Codex
+  billing, total conversation savings, or exact savings for an unknown tokenizer.

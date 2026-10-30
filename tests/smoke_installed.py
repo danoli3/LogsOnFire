@@ -21,6 +21,12 @@ with tempfile.TemporaryDirectory() as directory:
     run = subprocess.run(wrapper + ["run", "--quiet", "--", sys.executable, "-c", "print('hello')"], env=environment, capture_output=True, timeout=30)
     assert run.returncode == 0, run.stderr
     assert json.loads(run.stdout)["status"] == "ok", run.stdout
+    tracked = subprocess.run(wrapper+["savings","--ledger",str(Path(directory)/"savings.sqlite3"),"--db",str(db),
+                                     "run","--",sys.executable,"-c","print('hello from tracked run')"],
+                             env=environment,capture_output=True,timeout=30)
+    assert tracked.returncode == 0, (tracked.stdout,tracked.stderr)
+    assert json.loads(tracked.stdout)["report"]["outcome"] == "passed", tracked.stdout
+    assert (Path(directory)/"SAVINGS.md").is_file()
     if not skip_http:
         server = subprocess.Popen([sys.executable, str(endpoint), "serve", "--port", "0"], env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:

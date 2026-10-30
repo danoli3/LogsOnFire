@@ -6,4 +6,8 @@ if [[ -f "$script_dir/../python/logsonfire.py" ]]; then
 else
   endpoint="$script_dir/../share/logsonfire/logsonfire.py"
 fi
+if [[ "${1:-}" == savings ]]; then
+  shift
+  endpoint="$(dirname -- "$endpoint")/logsonfire_savings.py"
+fi
 exec "${PYTHON:-python3}" "$endpoint" "$@"

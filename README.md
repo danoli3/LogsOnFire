@@ -68,6 +68,9 @@ not happened yet.
 
 ## Analyze existing logs
 
+Text adapters now cover Xcode, Android logcat, Android Studio, VS Code, Make,
+CMake, and Gradle/Kotlin. See [format examples and export instructions](docs/FORMATS.md).
+
 Examples use `build/logsonfire`; after installation, use `logsonfire`.
 
 ```sh
@@ -209,6 +212,17 @@ an `error` object. Use `check` when CI should fail based on the analysis.
 `logsonfire-agent run` returns the process exit code, independently of findings.
 
 ## Resource use and privacy
+
+Development runs can be recorded in a local [savings ledger](docs/SAVINGS.md):
+
+```sh
+python3 tools/savings.py run -- cmake --build build
+python3 tools/savings.py totals
+```
+
+The default token counter is explicitly an estimate. Usage and retrospective
+benchmarks remain separate, and reports larger than their inputs show negative
+savings in `.logsonfire/SAVINGS.md`.
 
 - Ingestion streams input and commits each source atomically. A source becomes
   visible after ingestion completes. WAL permits readers to query older committed

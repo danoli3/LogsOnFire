@@ -209,7 +209,13 @@ struct Rule {
     string id, severity;
     std::regex pattern;
 };
-std::regex rx(const string &s) { return std::regex(s, std::regex::icase | std::regex::optimize); }
+std::regex rx(const string &s) {
+    try {
+        return std::regex(s, std::regex::icase | std::regex::optimize);
+    } catch (const std::regex_error &e) {
+        throw std::runtime_error("Invalid built-in pattern: " + s + " (" + e.what() + ")");
+    }
+}
 bool matches(const string &s, const std::regex &pattern, size_t *position = nullptr) {
     // libstdc++ uses recursive regex evaluation. Never hand it an unbounded
     // quantifier over a whole 64 KiB line: that can exhaust the Linux stack.
@@ -232,10 +238,94 @@ bool matches(const string &s, const std::regex &pattern, size_t *position = null
         start = end - overlap;
     }
 }
+struct Envelope {
+    string kind, priority, tag, pid, tid, message;
+    bool error() const {
+        const auto level = lower(priority);
+        return level == "e" || level == "f" || level == "a" || level == "error" || level == "fatal" ||
+               level == "critical";
+    }
+    bool warning() const { return lower(priority) == "warn" || lower(priority) == "warning" || lower(priority) == "w"; }
+    bool continuation() const {
+        const auto body = lower(message);
+        return body.rfind("at ", 0) == 0 || body.rfind("... ", 0) == 0 || body.rfind("process:", 0) == 0 ||
+               body.rfind("pid:", 0) == 0 ||
+               (body.size() > 1 && body[0] == '#' && std::isdigit(static_cast<unsigned char>(body[1])));
+    }
+};
+Envelope envelope(const string &text) {
+    if (text.empty() ||
+        (!std::isdigit(static_cast<unsigned char>(text[0])) && string("VDIWEFAvdiwefa").find(text[0]) == string::npos))
+        return {};
+    struct Layout {
+        const char *kind;
+        std::regex header;
+        int priority, tag, pid, tid;
+    };
+    static const std::vector<Layout> layouts = {
+        {"logcat",
+         rx("^(?:[0-9]{4}-)?[0-9]{2}-[0-9]{2}[[:space:]]+[0-9]{2}:[0-9]{2}:[0-9]{2}[.,][0-9]+[[:space:]]+([0-9]+)[[:"
+            "space:]]+([0-9]+)[[:space:]]+([VDIWEFA])[[:space:]]+([^:]+):[[:space:]]*"),
+         3, 4, 1, 2},
+        {"logcat",
+         rx("^(?:(?:[0-9]{4}-)?[0-9]{2}-[0-9]{2}[[:space:]]+[0-9]{2}:[0-9]{2}:[0-9]{2}[.,][0-9]+[[:space:]]+)?(["
+            "VDIWEFA])/([^(:]+)\\([[:space:]]*([0-9]+)\\)[[:space:]]*:[[:space:]]*"),
+         1, 2, 3, 0},
+        {"logcat", rx("^([VDIWEFA])/([^:]+):[[:space:]]*"), 1, 2, 0, 0},
+        {"logcat",
+         rx("^[0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]]+[0-9]{2}:[0-9]{2}:[0-9]{2}[.,][0-9]+[[:space:]]+([0-9]+)-([0-9]+)[["
+            ":space:]]+([^[:space:]]+)[[:space:]]+(?:[^[:space:]]+[[:space:]]+)?([VDIWEFA])[[:space:]]+"),
+         4, 3, 1, 2},
+        {"jetbrains",
+         rx("^[0-9]{4}-[0-9]{2}-[0-9]{2}[ "
+            "T][0-9]{2}:[0-9]{2}:[0-9]{2}[.,][0-9]+[[:space:]]+\\[[[:space:]]*[0-9]+\\][[:space:]]+(TRACE|DEBUG|INFO|"
+            "WARN|ERROR|FATAL)[[:space:]]+-[[:space:]]+([^[:space:]]+)[[:space:]]+-[[:space:]]*"),
+         1, 2, 0, 0},
+        {"vscode",
+         rx("^[0-9]{4}-[0-9]{2}-[0-9]{2}[ "
+            "T][0-9]{2}:[0-9]{2}:[0-9]{2}[.,][0-9]+[[:space:]]+\\[(trace|debug|info|warn|warning|error|critical)\\][[:"
+            "space:]]*(?:\\[([^\\]]+)\\][[:space:]]*)?"),
+         1, 2, 0, 0}};
+    const auto prefix = text.substr(0, 512);
+    for (const auto &layout : layouts) {
+        std::smatch match;
+        if (!std::regex_search(prefix, match, layout.header))
+            continue;
+        Envelope out;
+        out.kind = layout.kind;
+        out.priority = match[layout.priority].str();
+        if (layout.tag)
+            out.tag = match[layout.tag].str();
+        while (!out.tag.empty() && std::isspace(static_cast<unsigned char>(out.tag.back())))
+            out.tag.pop_back();
+        if (layout.pid)
+            out.pid = match[layout.pid].str();
+        if (layout.tid)
+            out.tid = match[layout.tid].str();
+        out.message = text.substr(static_cast<size_t>(match.length()));
+        return out;
+    }
+    return {};
+}
 const std::vector<Rule> &rules() {
     static const std::vector<Rule> items = {
         {"github.error", "error", rx("::error(?:[ :]|::)|##\\[error\\]")},
         {"github.warning", "warning", rx("::warning(?:[ :]|::)|##\\[warning\\]")},
+        {"exception.cause", "error", rx("(?:^|[[:space:]])Caused by:[[:space:]]*.+")},
+        {"android.crash", "error", rx("\\bFATAL EXCEPTION:|\\bFatal signal [0-9]+")},
+        {"xcode.signing", "error",
+         rx("Signing for .+ requires a development team|No profiles for .+ were found|Command CodeSign "
+            "failed|Provisioning profile .+doesn't include")},
+        {"vscode.extension", "error",
+         rx("Activating extension .+ failed|Extension host .*(?:crashed|terminated unexpectedly|exited with code "
+            "[1-9])")},
+        {"gradle.failed", "error",
+         rx("FAILURE: Build failed with an exception|Execution failed for task|Could not resolve all "
+            "(?:files|dependencies)")},
+        {"make.target", "error",
+         rx("No rule to make target|[Mm]akefile:[0-9]+:.*(?:missing separator|recipe commences before first target)")},
+        {"cmake.error", "error", rx("CMake Error(?: at| in|:)")},
+        {"compiler.kotlin", "error", rx("(?:^|[[:space:]])e:[[:space:]]+(?:file://|[^[:space:]]+\\.kt:)")},
         {"dependency.missing", "error",
          rx("fatal error:.*(?:No such file or directory|file not found)|Cannot open include file:|"
             "ModuleNotFoundError:|No module named |Could NOT find [A-Za-z0-9_]+")},
@@ -450,7 +540,7 @@ bool success_line(const string &s) {
            "Failures: 0, Errors: 0|^[0-9]+ passed(?: in |$)");
     return matches(s, pattern);
 }
-string detect_format(const string &s, string current) {
+string detect_format(const string &s, string current, const Envelope &entry) {
     if (current != "generic")
         return current;
     if (s.find("::error") != string::npos || s.find("##[group]") != string::npos ||
@@ -464,7 +554,18 @@ string detect_format(const string &s, string current) {
         return "crash";
     if (s.find("Traceback (most recent call last)") != string::npos)
         return "python";
-    if (s.find("CMake") != string::npos || s.find("ninja:") != string::npos)
+    if (s.find("Android Studio") != string::npos)
+        return "android-studio";
+    if (!entry.kind.empty())
+        return entry.kind;
+    if (s.find("CMake") != string::npos || s.rfind("-- Configuring", 0) == 0 || s.rfind("-- Generating", 0) == 0)
+        return "cmake";
+    if (s.rfind("make:", 0) == 0 || s.rfind("make[", 0) == 0 || s.rfind("gmake", 0) == 0 ||
+        s.rfind("Makefile:", 0) == 0)
+        return "make";
+    if (s.find("Gradle") != string::npos || s.rfind("> Task ", 0) == 0)
+        return "gradle";
+    if (s.find("ninja:") != string::npos)
         return "build";
     return current;
 }
@@ -541,7 +642,9 @@ Args parse(int argc, char **argv) {
     if (a.command.empty())
         a.command = "help";
     if (a.format != "auto" && a.format != "generic" && a.format != "github" && a.format != "xcode" &&
-        a.format != "crash" && a.format != "python" && a.format != "build")
+        a.format != "crash" && a.format != "python" && a.format != "build" && a.format != "logcat" &&
+        a.format != "android-studio" && a.format != "jetbrains" && a.format != "vscode" && a.format != "cmake" &&
+        a.format != "make" && a.format != "gradle")
         throw std::runtime_error("Unknown format");
     if (!a.severity.empty() && a.severity != "error" && a.severity != "warning")
         throw std::runtime_error("Severity must be error or warning");
@@ -597,6 +700,13 @@ long long ingest(Database &db, Args &a) {
         name = redactor.apply(name);
     redactor.private_key = false;
     string format = a.format == "auto" ? "generic" : a.format;
+    if (a.format == "auto" && a.file != "-") {
+        const auto basename = lower(fs::u8path(a.file).filename().u8string());
+        if (basename == "idea.log")
+            format = "jetbrains";
+        if (basename == "exthost.log")
+            format = "vscode";
+    }
     db.exec("BEGIN IMMEDIATE");
     try {
         Statement add(db.db, "INSERT INTO sources(name,format,redaction) VALUES(?,?,?)");
@@ -615,6 +725,7 @@ long long ingest(Database &db, Args &a) {
         string raw;
         long long total = 0, bytes = 0, truncated_count = 0, redacted_count = 0;
         bool success = false, truncated = false;
+        int cmake_error_context = 0;
         while (read_line(*input, raw, bytes, truncated)) {
             ++total;
             if (truncated)
@@ -626,9 +737,12 @@ long long ingest(Database &db, Args &a) {
                     ++redacted_count;
                 text = std::move(clean);
             }
+            const auto entry = envelope(text);
+            cmake_error_context = text.find("CMake Error") != string::npos ? 16 : std::max(0, cmake_error_context - 1);
             if (a.format == "auto")
-                format = detect_format(text, format);
-            success = success || success_line(text);
+                format = detect_format(text, format, entry);
+            if (entry.kind.empty())
+                success = success || success_line(text);
             line.bind(1, id);
             line.bind(2, total);
             line.bind(3, text);
@@ -640,37 +754,78 @@ long long ingest(Database &db, Args &a) {
                 index->step();
                 index->reset();
             }
-            if (!contains_any(lower(text), {"error",          "fatal",          "critical",
-                                            "warn",           "fail",           "exception",
-                                            "crash",          "segmentation",   "segfault",
-                                            "bus error",      "sigsegv",        "sigabrt",
-                                            "sigbus",         "sigill",         "sigfpe",
-                                            "sanitizer",      "traceback",      "panic",
-                                            "undefined",      "unresolved",     "duplicate symbol",
-                                            "cannot find -l", "build stopped",  "termination",
-                                            "could not find", "no module named"}))
+            if (!entry.kind.empty() && ((!entry.error() && !entry.warning()) || entry.continuation()))
                 continue;
-            for (const auto &rule : rules()) {
-                size_t position = 0;
-                if (!matches(text, rule.pattern, &position))
-                    continue;
+            auto save_issue = [&](const string &severity, const string &rule, size_t position) {
                 issue.bind(1, id);
-                issue.bind(2, rule.severity);
-                issue.bind(3, rule.id);
-                // Keep the matching diagnostic visible even when a long command
-                // or structured prefix precedes it on the physical line.
+                issue.bind(2, severity);
+                issue.bind(3, rule);
                 size_t excerpt_start = position > 300 ? position - 100 : 0;
                 while (excerpt_start && (static_cast<unsigned char>(text[excerpt_start]) & 0xc0) == 0x80)
                     --excerpt_start;
                 const auto excerpt = excerpt_start ? "..." + text.substr(excerpt_start) : text;
                 issue.bind(4, clip(excerpt, 2000));
-                issue.bind(5, fingerprint(text));
+                issue.bind(5, entry.kind.empty() ? fingerprint(text)
+                                                 : entry.kind + "|" + entry.pid + "|" + entry.tid + "|" + entry.tag +
+                                                       "|" + fingerprint(entry.message));
                 issue.bind(6, total);
                 issue.bind(7, total);
                 issue.step();
                 issue.reset();
+            };
+            if (entry.warning()) {
+                save_issue(entry.warning() ? "warning" : "error", entry.kind + ".warning", 0);
+                continue;
+            }
+            if (entry.kind.empty() && !contains_any(lower(text), {"error",
+                                                                  "fatal",
+                                                                  "critical",
+                                                                  "warn",
+                                                                  "fail",
+                                                                  "exception",
+                                                                  "crash",
+                                                                  "segmentation",
+                                                                  "segfault",
+                                                                  "bus error",
+                                                                  "sigsegv",
+                                                                  "sigabrt",
+                                                                  "sigbus",
+                                                                  "sigill",
+                                                                  "sigfpe",
+                                                                  "sanitizer",
+                                                                  "traceback",
+                                                                  "panic",
+                                                                  "undefined",
+                                                                  "unresolved",
+                                                                  "duplicate symbol",
+                                                                  "cannot find -l",
+                                                                  "build stopped",
+                                                                  "termination",
+                                                                  "could not find",
+                                                                  "no module named",
+                                                                  "caused by",
+                                                                  "no rule to make target",
+                                                                  "missing separator",
+                                                                  "signing for",
+                                                                  "no profiles for",
+                                                                  "e: "}))
+                continue;
+            bool found = false;
+            for (const auto &rule : rules()) {
+                if (entry.error() && rule.severity != "error")
+                    continue;
+                if (rule.id == "dependency.missing" && lower(text).find("could not find") != string::npos &&
+                    (!cmake_error_context || text.find("-- Could") != string::npos))
+                    continue;
+                size_t position = 0;
+                if (!matches(text, rule.pattern, &position))
+                    continue;
+                save_issue(rule.severity, rule.id, position);
+                found = true;
                 break; // One primary classification per line; error rules precede warnings.
             }
+            if (!found && entry.error())
+                save_issue("error", entry.kind + ".error", 0);
         }
         if (input->bad() || (file.is_open() && file.bad()))
             throw std::runtime_error("Error reading log");
@@ -742,11 +897,21 @@ Outcome outcome(Database &db, long long id) {
     return o;
 }
 string issue_json(const Statement &q, bool compact = false) {
+    Statement original(
+        sqlite3_db_handle(q.stmt),
+        "SELECT l.text FROM issues i JOIN lines l ON l.source_id=i.source_id AND l.number=i.first_line WHERE i.id=?");
+    original.bind(1, q.num(0));
+    original.step();
+    const auto entry = envelope(original.str(0));
+    string origin;
+    if (!entry.kind.empty())
+        origin = ",\"origin\":{\"system\":" + json(entry.kind) + ",\"priority\":" + json(entry.priority) +
+                 ",\"tag\":" + json(entry.tag) + ",\"pid\":" + json(entry.pid) + ",\"tid\":" + json(entry.tid) + "}";
     return "{\"id\":" + std::to_string(q.num(0)) + ",\"severity\":" + json(q.str(1)) + ",\"rule\":" + json(q.str(2)) +
            ",\"message\":" + json(clip(q.str(3), compact ? 500 : 1500)) + ",\"message_truncated\":" +
            (q.str(3).size() > (compact ? 500u : 1500u) || q.str(3).rfind("...", 0) == 0 ? "true" : "false") +
            ",\"first_line\":" + std::to_string(q.num(4)) + ",\"last_line\":" + std::to_string(q.num(5)) +
-           ",\"count\":" + std::to_string(q.num(6)) + "}";
+           ",\"count\":" + std::to_string(q.num(6)) + origin + "}";
 }
 string summary(Database &db, long long id) {
     auto o = outcome(db, id);
@@ -784,6 +949,41 @@ struct Advice {
 };
 Advice advice(const string &rule, const string &message) {
     const auto text = lower(message);
+    if (rule == "compiler.kotlin")
+        return {"The Kotlin compiler reported a source diagnostic.",
+                {"Inspect the .kt file and line, unresolved symbol, imports, and module dependencies before "
+                 "investigating later Gradle task failures."}};
+    if (rule == "exception.cause")
+        return {
+            "The exception chain reports an underlying cause.",
+            {"Inspect this cause and the adjacent application stack frames; outer exceptions may be consequences."}};
+    if (rule == "android.crash" || rule == "logcat.error")
+        return {"Android reported a crash or error-level event.",
+                {"Inspect the exception chain and stack frames for this PID/tag; distinguish application failures from "
+                 "unrelated device services."}};
+    if (rule == "vscode.extension" || rule == "vscode.error")
+        return {"VS Code or an extension reported an error.",
+                {"Check the named extension and the Extension Host/renderer log; correlate with the operation that "
+                 "failed."}};
+    if (rule == "jetbrains.error")
+        return {"The IDE reported an error.",
+                {"Inspect the logger, exception cause, and Gradle sync/build output; IDE logs and application logcat "
+                 "describe different processes."}};
+    if (rule == "gradle.failed")
+        return {"Gradle reported a failed task or dependency resolution.",
+                {"Inspect the first failed task and its nested cause; use Gradle --stacktrace if the exported output "
+                 "omits the exception chain."}};
+    if (rule == "cmake.error")
+        return {"CMake reported a configuration or script error.",
+                {"Inspect the named CMake file/call and following detail; distinguish configuration failures from "
+                 "compiler feature probes."}};
+    if (rule == "make.target")
+        return {"Make could not construct a target or parse a recipe.",
+                {"Check the missing target/path or recipe indentation at the reported Makefile line."}};
+    if (rule == "xcode.signing")
+        return {"Xcode reported a signing or provisioning problem.",
+                {"Check the selected development team, signing identity, provisioning profile, bundle identifier, and "
+                 "build destination."}};
     if (rule == "dependency.missing") {
         Advice a{"A required header, module, or package could not be found.",
                  {"Check that the dependency is installed in the failing job and that its include or module search "
@@ -813,7 +1013,8 @@ Advice advice(const string &rule, const string &message) {
     if (rule == "exception.unhandled")
         return {"The program reported an unhandled exception or panic.",
                 {"Read the surrounding stack trace and final exception message to identify the failing operation."}};
-    if (rule == "compiler.warning" || rule == "log.warning" || rule == "github.warning")
+    if (rule == "compiler.warning" || rule == "log.warning" || rule == "github.warning" || rule == "logcat.warning" ||
+        rule == "jetbrains.warning" || rule == "vscode.warning")
         return {"The log contains a warning that may need attention.",
                 {"Review the warning in context; a warning alone does not establish that the process failed."}};
     if (rule == "build.failed" || rule == "github.error")
@@ -834,26 +1035,34 @@ string string_array(const std::vector<string> &items) {
 }
 string explain(Database &db, long long id, bool human) {
     const auto o = outcome(db, id);
-    Statement source(db.db, "SELECT name,lines,truncated_lines,exit_code FROM sources WHERE id=?");
+    Statement source(db.db, "SELECT name,lines,truncated_lines,exit_code,format FROM sources WHERE id=?");
     source.bind(1, id);
     source.step();
     string answer;
-    if (o.outcome == "failed")
-        answer = "The build or run failed.";
-    else if (o.outcome == "passed")
+    if (o.outcome == "failed") {
+        const auto format = source.str(4);
+        const bool continuous =
+            format == "logcat" || format == "android-studio" || format == "jetbrains" || format == "vscode";
+        answer = continuous && sqlite3_column_type(source.stmt, 3) == SQLITE_NULL
+                     ? "The log contains error or crash evidence."
+                     : "The build or run failed.";
+    } else if (o.outcome == "passed")
         answer = o.warnings ? "The build or run completed successfully, with warnings."
                             : "The build or run completed successfully; no error patterns were detected.";
     else
         answer = "The log does not establish a successful outcome. " + o.reason + ".";
     // Rank specific diagnostics ahead of generic failure markers. This selects
     // evidence for investigation; it does not prove a root cause.
-    Statement q(db.db,
-                "SELECT id,severity,rule,message,first_line,last_line,count FROM issues WHERE source_id=? ORDER BY "
-                "CASE severity WHEN 'error' THEN 0 ELSE 1 END, CASE rule "
-                "WHEN 'dependency.missing' THEN 0 WHEN 'linker.error' THEN 1 WHEN 'compiler.error' THEN 2 "
-                "WHEN 'crash.signal' THEN 3 WHEN 'crash.apple' THEN 3 WHEN 'log.error' THEN 4 "
-                "WHEN 'test.failed' THEN 5 WHEN 'exception.unhandled' THEN 6 WHEN 'github.error' THEN 7 "
-                "WHEN 'build.failed' THEN 8 ELSE 9 END,first_line LIMIT 3");
+    Statement q(
+        db.db,
+        "SELECT id,severity,rule,message,first_line,last_line,count FROM issues WHERE source_id=? ORDER BY "
+        "CASE severity WHEN 'error' THEN 0 ELSE 1 END, CASE rule "
+        "WHEN 'dependency.missing' THEN 0 WHEN 'exception.cause' THEN 0 WHEN 'xcode.signing' THEN 0 WHEN 'make.target' "
+        "THEN 1 WHEN 'linker.error' THEN 1 WHEN 'compiler.error' THEN 2 WHEN 'compiler.kotlin' THEN 2 "
+        "WHEN 'crash.signal' THEN 3 WHEN 'crash.apple' THEN 3 WHEN 'android.crash' THEN 3 WHEN 'vscode.extension' THEN "
+        "1 WHEN 'cmake.error' THEN 3 WHEN 'gradle.failed' THEN 4 WHEN 'log.error' THEN 4 "
+        "WHEN 'test.failed' THEN 5 WHEN 'exception.unhandled' THEN 6 WHEN 'github.error' THEN 7 "
+        "WHEN 'build.failed' THEN 8 ELSE 9 END,first_line LIMIT 3");
     q.bind(1, id);
     string items = "[", human_details, primary_rule;
     long long primary_line = 0;
@@ -908,7 +1117,33 @@ string explain(Database &db, long long id, bool human) {
     }
     context += ']';
     string crash_context = "[", human_crash_context;
-    if (primary_rule == "crash.signal" || primary_rule == "crash.apple") {
+    if (primary_rule == "exception.cause" || primary_rule == "android.crash") {
+        Statement frames(db.db, "SELECT text FROM lines WHERE source_id=? AND number=?");
+        frames.bind(1, id);
+        frames.bind(2, primary_line);
+        frames.step();
+        const auto root = envelope(frames.str(0));
+        Statement near(db.db,
+                       "SELECT number,text FROM lines WHERE source_id=? AND number BETWEEN ? AND ? ORDER BY number");
+        near.bind(1, id);
+        near.bind(2, primary_line);
+        near.bind(3, primary_line + 32);
+        int count = 0;
+        while (near.step() && count < 8) {
+            const auto text = near.str(1);
+            if (text.empty())
+                break;
+            const auto item = envelope(text);
+            if (!root.pid.empty() && item.pid != root.pid)
+                continue;
+            if (count)
+                crash_context += ',';
+            ++count;
+            crash_context += "{\"line\":" + std::to_string(near.num(0)) + ",\"text\":" + json(clip(text, 300)) +
+                             ",\"truncated\":" + (text.size() > 300 ? "true" : "false") + "}";
+            human_crash_context += "  " + std::to_string(near.num(0)) + " | " + clip(text, 300) + "\n";
+        }
+    } else if (primary_rule == "crash.signal" || primary_rule == "crash.apple") {
         Statement header(db.db, "SELECT number FROM lines WHERE source_id=? AND number BETWEEN ? AND ? AND "
                                 "(instr(lower(text),'crashed:')>0 OR instr(lower(text),'stack trace:')>0 OR "
                                 "instr(lower(text),'stacktrace:')>0) "
@@ -1075,7 +1310,7 @@ int run_main(int argc, char **argv) {
         }
         if (a.command == "help" || a.command == "schema") {
             std::cout
-                << R"({"schema_version":1,"name":"logsonfire","commands":{"analyze":"FILE|- [--human] [--name NAME] [--format FORMAT] [--exit-code 0..4294967295]","explain":"[--source ID] [--human]","ingest":"FILE|- [--name NAME] [--format auto|generic|github|xcode|crash|python|build] [--exit-code 0..4294967295] [--no-redact]","summary":"[--source ID]","check":"[--source ID]; exit 0=passed, 1=failed, 2=unknown/tool error","sources":"[--limit 1..100] [--offset N]","issues":"[--source ID] [--severity error|warning] [--limit 1..100] [--offset N]","context":"[--source ID] --line N [--before 0..49] [--after 0..49]","search":"[--source ID] --text TEXT [--fts] [--limit 1..100] [--offset N]"},"global":"--db PATH or LOGSONFIRE_DB; default .logsonfire/logs.db","defaults":"latest source; JSON by default; analyze/explain support --human; responses <=32768 bytes; summary <=5 issues","workflow":["ingest","summary","issues if needed","context at first_line"]})"
+                << R"({"schema_version":1,"name":"logsonfire","commands":{"analyze":"FILE|- [--human] [--name NAME] [--format FORMAT] [--exit-code 0..4294967295]","explain":"[--source ID] [--human]","ingest":"FILE|- [--name NAME] [--format auto|generic|github|xcode|crash|python|build|logcat|android-studio|jetbrains|vscode|make|cmake|gradle] [--exit-code 0..4294967295] [--no-redact]","summary":"[--source ID]","check":"[--source ID]; exit 0=passed, 1=failed, 2=unknown/tool error","sources":"[--limit 1..100] [--offset N]","issues":"[--source ID] [--severity error|warning] [--limit 1..100] [--offset N]","context":"[--source ID] --line N [--before 0..49] [--after 0..49]","search":"[--source ID] --text TEXT [--fts] [--limit 1..100] [--offset N]"},"global":"--db PATH or LOGSONFIRE_DB; default .logsonfire/logs.db","defaults":"latest source; JSON by default; analyze/explain support --human; responses <=32768 bytes; summary <=5 issues","workflow":["ingest","summary","issues if needed","context at first_line"]})"
                 << '\n';
             return 0;
         }
