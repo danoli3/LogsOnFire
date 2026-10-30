@@ -174,8 +174,15 @@ class Ledger:
 def emit_report(ledger, session, report, counter, operation, event_id=None):
     # Charge the exact compact UTF-8 text printed, including this receipt and newline.
     output = json.dumps({"report": report, "savings_session": session}, ensure_ascii=False, separators=(",", ":")) + "\n"
-    ledger.charge(session, output.encode("utf-8"), counter, operation, event_id)
-    sys.stdout.write(output)
+    data = output.encode("utf-8")
+    ledger.charge(session, data, counter, operation, event_id)
+    if hasattr(sys.stdout,"buffer"):
+        # Bypass Windows text newline translation and console code pages so the
+        # bytes charged to the ledger are exactly the bytes delivered.
+        sys.stdout.buffer.write(data)
+        sys.stdout.buffer.flush()
+    else:
+        sys.stdout.write(output)
 
 
 def main(argv=None):
