@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$script_dir/../python/logsonfire.py" ]]; then
+  endpoint="$script_dir/../python/logsonfire.py"
+else
+  endpoint="$script_dir/../share/logsonfire/logsonfire.py"
+fi
+exec "${PYTHON:-python3}" "$endpoint" "$@"

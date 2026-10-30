@@ -1,0 +1,42 @@
+name: Prepare release
+on:
+  push:
+    tags: ['v[0-9]*']
+permissions:
+  contents: read
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+  draft:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: logsonfire-*
+          path: dist
+          merge-multiple: true
+      - name: Source archive and package manager manifests
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          PACKAGE_ID: ${{ vars.WINGET_PACKAGE_ID || 'LogsOnFire.LogsOnFire' }}
+          PUBLISHER: ${{ github.repository_owner }}
+        run: |
+          version="${TAG#v}"
+          python -c 'import re,sys; assert sys.argv[1] == re.search(r"project\(LogsOnFire VERSION ([0-9.]+)", open("CMakeLists.txt").read())[1], "Tag differs from CMake version"' "$version"
+          git archive --format=tar.gz --prefix="logsonfire-$version/" -o "dist/logsonfire-$version-source.tar.gz" HEAD
+          python tools/release_manifests.py --repository "$REPOSITORY" --version "$version" --artifacts dist --output dist/manifests --package-id "$PACKAGE_ID" --publisher "$PUBLISHER"
+          cp dist/manifests/SHA256SUMS dist/SHA256SUMS
+          tar -czf "dist/logsonfire-$version-manifests.tar.gz" -C dist/manifests homebrew winget
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm dist/SHA256SUMS --verify-tag --draft --title "LogsOnFire $TAG" --notes-file docs/RELEASE_NOTES.md

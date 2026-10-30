@@ -1,0 +1,8 @@
+/build*/
+/.logsonfire/
+/dist/
+__pycache__/
+*.pyc
+*.db
+*.db-shm
+*.db-wal
