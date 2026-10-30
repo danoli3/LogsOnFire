@@ -1,4 +1,5 @@
 """Check installed layout, Bash/PowerShell endpoints, and a live HTTP request in CI."""
+from contextlib import closing
 import json
 import os
 import sqlite3
@@ -28,7 +29,7 @@ with tempfile.TemporaryDirectory() as directory:
     assert tracked.returncode == 0, (tracked.stdout,tracked.stderr)
     assert json.loads(tracked.stdout)["report"]["outcome"] == "passed", tracked.stdout
     assert (Path(directory)/"SAVINGS.md").is_file()
-    with sqlite3.connect(Path(directory)/"savings.sqlite3") as connection:
+    with closing(sqlite3.connect(Path(directory)/"savings.sqlite3")) as connection:
         delivered = connection.execute("SELECT sum(bytes) FROM deliveries").fetchone()[0]
     assert delivered == len(tracked.stdout), (delivered,len(tracked.stdout),tracked.stdout)
     if not skip_http:
