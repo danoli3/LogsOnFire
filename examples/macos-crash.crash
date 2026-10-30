@@ -1,0 +1,16 @@
+# Synthetic crash-report fixture for demonstration; not a crash from a real user.
+Process:               ExampleApp [1234]
+Path:                  /Applications/ExampleApp.app/Contents/MacOS/ExampleApp
+Identifier:            org.example.ExampleApp
+Code Type:             ARM-64 (Native)
+Date/Time:             2026-10-31 10:00:00.000 +1100
+
+Exception Type:        EXC_BAD_ACCESS (SIGSEGV)
+Exception Codes:       KERN_INVALID_ADDRESS at 0x0000000000000000
+Termination Reason:   Namespace SIGNAL, Code 11 Segmentation fault: 11
+Crashed Thread:        0  Dispatch queue: com.apple.main-thread
+
+Thread 0 Crashed:
+0   ExampleApp       0x0000000100001234 parse_record(char const*) + 40
+1   ExampleApp       0x0000000100002340 load_document(char const*) + 128
+2   ExampleApp       0x0000000100003450 main + 96

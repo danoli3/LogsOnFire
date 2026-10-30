@@ -63,8 +63,8 @@ class Client:
             raise LogError("Native executable failed", payload)
         return payload
 
-    def ingest(self, path, *, name=None, exit_code=None, format="auto"):
-        args = [self.binary, "--db", self.db, "ingest", str(path), "--format", format]
+    def _read_file(self, command, path, *, name=None, exit_code=None, format="auto"):
+        args = [self.binary, "--db", self.db, command, str(path), "--format", format]
         if name is not None:
             args += ["--name", name]
         if exit_code is not None:
@@ -77,6 +77,16 @@ class Client:
         if result.returncode or "error" in payload:
             raise LogError(payload.get("error", {}).get("message", "Ingestion failed"), payload)
         return payload
+
+    def ingest(self, path, *, name=None, exit_code=None, format="auto"):
+        return self._read_file("ingest", path, name=name, exit_code=exit_code, format=format)
+
+    def analyze(self, path, *, name=None, exit_code=None, format="auto"):
+        """Read a dropped log and explain the most useful diagnostic evidence."""
+        return self._read_file("analyze", path, name=name, exit_code=exit_code, format=format)
+
+    def explain(self, source=None):
+        return self.query("explain", source=source)
 
     def summary(self, source=None):
         return self.query("summary", source=source)
@@ -153,11 +163,12 @@ API_SCHEMA = {
         "/v1/schema": {},
         "/v1/sources": {"limit": "1..100", "offset": "0..2147483647"},
         "/v1/summary": {"source": "positive source ID; latest if omitted"},
+        "/v1/explain": {"source": "positive source ID; latest if omitted"},
         "/v1/issues": {"source": "ID", "severity": "error|warning", "limit": "1..100", "offset": "N"},
         "/v1/context": {"source": "ID", "line": "positive line number", "before": "0..49", "after": "0..49"},
         "/v1/search": {"source": "ID", "text": "literal substring, required", "limit": "1..100", "offset": "N"},
     },
-    "workflow": ["GET /v1/summary", "GET /v1/issues?source=ID if needed", "GET /v1/context?source=ID&line=FIRST_LINE"],
+    "workflow": ["GET /v1/explain for an assessment, or /v1/summary for status", "GET /v1/issues?source=ID if needed", "GET /v1/context?source=ID&line=FIRST_LINE"],
     "outcomes": {"passed": "Completion evidence with no detected errors", "failed": "Detected error or nonzero exit", "unknown": "Missing completion evidence or incomplete analysis"},
 }
 

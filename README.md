@@ -11,6 +11,20 @@ and Apple crash indicators.
 This is an initial implementation. Detectors are heuristics. A report describes
 the evidence found; it cannot guarantee that a build or program is correct.
 
+## Drop in a log: “what's wrong?”
+
+```sh
+build/logsonfire analyze examples/github-actions-failed.log --human
+```
+
+LogsOnFire reads and saves the log, explains the strongest diagnostics, suggests
+what to check, and shows a small evidence window. In the included example, it
+surfaces the missing `sqlite3.h` header before the generic CI failure messages.
+Omit `--human` for compact JSON an AI agent can consume directly.
+
+Use `logsonfire analyze YOUR_LOG.txt` for your own text log, or `logsonfire explain
+--source ID` to revisit saved evidence. See the [complete user/agent example](examples/README.md).
+
 ## Build
 
 Requires CMake 3.20+, a C++17 compiler, and SQLite 3.24+ development headers/libraries.

@@ -1,0 +1,13 @@
+2026-10-31T00:01:00.0000000Z ##[group]Run cmake --build build --parallel
+2026-10-31T00:01:00.0000100Z cmake --build build --parallel
+2026-10-31T00:01:00.0000200Z shell: /usr/bin/bash -e {0}
+2026-10-31T00:01:00.0000300Z ##[endgroup]
+2026-10-31T00:01:01.0000000Z [1/3] Building CXX object CMakeFiles/app.dir/src/main.cpp.o
+2026-10-31T00:01:01.0000100Z FAILED: CMakeFiles/app.dir/src/main.cpp.o
+2026-10-31T00:01:01.0000200Z /usr/bin/c++ -O3 -c /home/runner/work/app/app/src/main.cpp
+2026-10-31T00:01:01.0000300Z /home/runner/work/app/app/src/main.cpp:1:10: fatal error: sqlite3.h: No such file or directory
+2026-10-31T00:01:01.0000400Z     1 | #include <sqlite3.h>
+2026-10-31T00:01:01.0000500Z       |          ^~~~~~~~~~~
+2026-10-31T00:01:01.0000600Z compilation terminated.
+2026-10-31T00:01:01.0000700Z ninja: build stopped: subcommand failed.
+2026-10-31T00:01:01.0000800Z ##[error]Process completed with exit code 1.

@@ -48,6 +48,49 @@ class SystemTests(unittest.TestCase):
         self.assertEqual(len(self.client.context(line=2)["items"]), 4)
         self.cli("check", code=1)
 
+    def test_drop_github_log_and_ask_whats_wrong(self):
+        report = self.client.analyze(ROOT / "examples/github-actions-failed.log")
+        self.assertEqual(report["outcome"], "failed")
+        self.assertEqual(report["analysis"], "rule_based")
+        self.assertIn("could not be found", report["answer"])
+        primary = report["findings"][0]
+        self.assertEqual(primary["rule"], "dependency.missing")
+        self.assertIn("sqlite3.h", primary["message"])
+        self.assertTrue(any("libsqlite3-dev" in check for check in primary["suggested_checks"]))
+        self.assertTrue(any(row["line"] == primary["first_line"] for row in report["context"]))
+        self.assertEqual(self.client.explain(report["source_id"])["answer"], report["answer"])
+        result = subprocess.run([BINARY, "--db", self.db, "explain", "--human"], capture_output=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Start here (log line 8, dependency.missing)", result.stdout.decode())
+        self.assertIn("sqlite3.h", result.stdout.decode())
+
+    def test_explain_unknown_failure_without_diagnostic_and_passed(self):
+        self.ingest("still compiling\n")
+        report = self.client.explain()
+        self.assertEqual(report["outcome"], "unknown")
+        self.assertTrue(report["suggested_checks"])
+        self.ingest("stopped\n", "--exit-code", "9")
+        report = self.client.explain()
+        self.assertEqual((report["outcome"], report["exit_code"]), ("failed", 9))
+        self.assertEqual(report["findings"], [])
+        self.assertTrue(report["suggested_checks"])
+        self.ingest("** BUILD SUCCEEDED **\n")
+        report = self.client.explain()
+        self.assertEqual(report["outcome"], "passed")
+        self.assertEqual(report["findings"], [])
+        self.assertIn("successfully", report["answer"])
+
+    def test_explain_prioritizes_error_before_warning(self):
+        self.ingest("warning: unused variable\nFAILED: app.o\nmain.cpp:2:3: error: syntax error\n")
+        self.assertEqual(self.client.explain()["findings"][0]["rule"], "compiler.error")
+        self.cli("summary", "--human", code=2)
+
+    def test_analyze_stdin_is_bounded(self):
+        report = self.cli("analyze", "-", data=("error: " + '"' * 60000 + "\n").encode())
+        self.assertEqual(report["outcome"], "failed")
+        self.assertTrue(report["findings"][0]["message_truncated"])
+        self.assertTrue(report["context"][0]["truncated"])
+
     def test_xcode_success_with_warning(self):
         report = self.ingest("xcodebuild -project app.xcodeproj\n/a.cpp:4:2: warning: unused variable\n** BUILD SUCCEEDED **\n")
         self.assertEqual((report["format"], report["status"], report["outcome"]), ("xcode", "warning", "passed"))
@@ -59,6 +102,12 @@ class SystemTests(unittest.TestCase):
         self.assertEqual(report["outcome"], "unknown")
         self.assertEqual(report["errors"], 0)
         self.cli("check", code=2)
+
+    def test_echoed_error_text_and_progress_ok_are_not_results(self):
+        report = self.ingest('report = self.ingest("error: " + "x" * 65000)\nOK starting next build\n')
+        self.assertEqual(report["errors"], 0)
+        self.assertEqual(report["outcome"], "unknown")
+        self.assertEqual(self.ingest("OK (skipped=1)\n")["outcome"], "passed")
 
     def test_success_requires_absence_of_errors(self):
         report = self.ingest("fatal error: missing file\n** BUILD SUCCEEDED **\n", "--exit-code", "0")
@@ -134,6 +183,21 @@ class SystemTests(unittest.TestCase):
         self.assertEqual(report["outcome"], "failed")
         self.assertTrue(report["top_issues"][0]["message_truncated"])
         self.assertEqual(self.client.context(line=2, before=0, after=0)["items"][0]["text"], "token=[REDACTED]")
+
+    def test_long_lines_keep_late_errors_and_redact_full_secret_values(self):
+        report = self.ingest("prefix " + "x" * 5000 + " error: late diagnostic\n" +
+                             "padding " + "x" * 1010 + " token=" + "s" * 12000 + "\n" +
+                             "error:" + " " * 20000 + "message\n")
+        self.assertEqual(report["errors"], 2)
+        self.assertIn("late diagnostic", report["top_issues"][0]["message"])
+        self.assertEqual(self.client.search("ssssssss")["items"], [])
+        self.assertTrue(self.client.search("REDACTED")["items"])
+
+    def test_redaction_quoted_values_and_multiple_secrets(self):
+        self.ingest('password="escaped \\\" private words" token=secondsecret Authorization: Basic dXNlcjpwYXNz\n'
+                    '{"apiKey":"thirdvalue", "client_secret":"fourthvalue"}\n')
+        for value in ("private words", "secondsecret", "dXNlcjpwYXNz", "thirdvalue", "fourthvalue"):
+            self.assertEqual(self.client.search(value)["items"], [], value)
 
     def test_response_budget_and_pagination(self):
         report = self.ingest("".join(f"error: issue{i} " + "x" * 2000 + "\n" for i in range(100)))
@@ -271,6 +335,9 @@ class SystemTests(unittest.TestCase):
         status, payload = request("/v1/schema")
         self.assertEqual(status, 200)
         self.assertTrue(payload["read_only"])
+        status, payload = request("/v1/explain")
+        self.assertEqual((status, payload["outcome"]), (200, "failed"))
+        self.assertTrue(payload["answer"])
         for path, headers, expected in [
             ("/v1/missing", {}, 404),
             ("/v1/search?text=x&db=elsewhere", {}, 400),

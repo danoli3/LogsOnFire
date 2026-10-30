@@ -9,6 +9,7 @@
 #include <sqlite3.h>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 #ifdef _WIN32
 #include <fcntl.h>
@@ -209,10 +210,35 @@ struct Rule {
     std::regex pattern;
 };
 std::regex rx(const string &s) { return std::regex(s, std::regex::icase | std::regex::optimize); }
+bool matches(const string &s, const std::regex &pattern, size_t *position = nullptr) {
+    // libstdc++ uses recursive regex evaluation. Never hand it an unbounded
+    // quantifier over a whole 64 KiB line: that can exhaust the Linux stack.
+    constexpr size_t window = 1024, overlap = 256;
+    for (size_t start = 0;;) {
+        const auto end = std::min(s.size(), start + window);
+        auto flags = std::regex_constants::match_default;
+        if (start)
+            flags |= std::regex_constants::match_not_bol | std::regex_constants::match_prev_avail;
+        if (end < s.size())
+            flags |= std::regex_constants::match_not_eol;
+        std::match_results<string::const_iterator> result;
+        if (std::regex_search(s.cbegin() + start, s.cbegin() + end, result, pattern, flags)) {
+            if (position)
+                *position = start + static_cast<size_t>(result.position());
+            return true;
+        }
+        if (end == s.size())
+            return false;
+        start = end - overlap;
+    }
+}
 const std::vector<Rule> &rules() {
     static const std::vector<Rule> items = {
         {"github.error", "error", rx("::error(?:[ :]|::)|##\\[error\\]")},
         {"github.warning", "warning", rx("::warning(?:[ :]|::)|##\\[warning\\]")},
+        {"dependency.missing", "error",
+         rx("fatal error:.*(?:No such file or directory|file not found)|Cannot open include file:|"
+            "ModuleNotFoundError:|No module named |Could NOT find [A-Za-z0-9_]+")},
         {"crash.signal", "error",
          rx("segmentation fault|segfault|bus "
             "error|EXC_BAD_ACCESS|EXC_CRASH|SIGSEGV|SIGABRT|SIGBUS|SIGILL|SIGFPE|addresssanitizer|"
@@ -236,7 +262,8 @@ const std::vector<Rule> &rules() {
          rx("(?:^|[[:space:]])FAIL(?:ED)?(?:[ :]|$)|[1-9][0-9]* (?:failed|failures|errors)(?:[, .]|$)|test case .+ "
             "failed|The following tests FAILED")},
         {"log.error", "error",
-         rx("\\b(?:ERROR|FATAL|CRITICAL)\\b[[:space:]]*[:\\]]|\\[(?:ERROR|FATAL|CRITICAL)\\]|\"(?:level|severity|"
+         rx("(?:^|[[:space:]:\\]])(?:ERROR|FATAL|CRITICAL)\\b[[:space:]]*[:\\]]|\\[(?:ERROR|FATAL|CRITICAL)\\]|\"(?:"
+            "level|severity|"
             "levelname)\"[[:space:]]*:[[:space:]]*\"(?:error|fatal|critical)\"|\\b[a-zA-Z_][a-zA-Z0-9_.]*(?:Error|"
             "Exception):")},
         {"compiler.warning", "warning", rx("\\bwarning[ :]+|\\bwarning [A-Z]+[0-9]+:")},
@@ -278,42 +305,148 @@ struct Redactor {
                 private_key = false;
             return "[REDACTED PRIVATE KEY]";
         }
-        if (!contains_any(lower(s), {"authorization", "bearer", "password", "passwd", "pwd", "token", "secret",
-                                     "api_key", "api-key", "access_key", "access-key", "ghp_", "gho_", "ghu_", "ghs_",
-                                     "ghr_", "github_pat_", "akia", "://"}))
+        if (!contains_any(lower(s),
+                          {"authorization", "bearer",  "password", "passwd",     "pwd",         "token",     "secret",
+                           "api_key",       "api-key", "apikey",   "access_key", "access-key",  "accesskey", "ghp_",
+                           "gho_",          "ghu_",    "ghs_",     "ghr_",       "github_pat_", "akia",      "://"}))
             return s;
-        static const auto auth = rx("(authorization[\\\"']?[[:space:]]*[:=][[:space:]]*[\\\"']?(?:bearer|basic)[[:"
-                                    "space:]]+)[^[:space:]\\\"',;]+");
-        static const auto bearer = rx("(\\bbearer[[:space:]]+)[A-Za-z0-9._~+/-]+=*");
-        static const auto assigned =
-            rx("((?:password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|client[_-]?secret)[\\\"']?[[:space:]]*["
-               ":=][[:space:]]*)(?:\"[^\"]*\"|'[^']*'|[^[:space:]&,;]+)");
-        static const auto tokens =
-            rx("\\b(?:gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,}|AKIA[A-Z0-9]{16})\\b");
-        static const auto credentials = rx("(https?://)[^/@[:space:]]+:[^/@[:space:]]+@");
-        s = std::regex_replace(s, auth, "$1[REDACTED]");
-        s = std::regex_replace(s, bearer, "$1[REDACTED]");
-        s = std::regex_replace(s, assigned, "$1[REDACTED]");
-        s = std::regex_replace(s, tokens, "[REDACTED]");
-        return std::regex_replace(s, credentials, "$1[REDACTED]@");
+        const auto text = lower(s);
+        std::vector<std::pair<size_t, size_t>> spans;
+        auto space = [&](size_t i) { return i < s.size() && std::isspace(static_cast<unsigned char>(s[i])); };
+        auto value_end = [&](size_t start, char quote) {
+            size_t end = start;
+            while (end < s.size()) {
+                if (quote) {
+                    if (s[end] == '\\' && end + 1 < s.size()) {
+                        end += 2;
+                        continue;
+                    }
+                    if (s[end] == quote)
+                        break;
+                } else if (space(end) || s[end] == '&' || s[end] == ',' || s[end] == ';' || s[end] == '"' ||
+                           s[end] == '\'')
+                    break;
+                ++end;
+            }
+            return end;
+        };
+        for (const string key :
+             {"authorization", "password", "passwd", "pwd", "token", "secret", "api_key", "api-key", "apikey",
+              "access_key", "access-key", "accesskey", "client_secret", "client-secret", "clientsecret"}) {
+            size_t position = 0;
+            while ((position = text.find(key, position)) != string::npos) {
+                size_t i = position + key.size();
+                position = i;
+                if (i < s.size() && (s[i] == '"' || s[i] == '\''))
+                    ++i;
+                while (space(i))
+                    ++i;
+                if (i == s.size() || (s[i] != ':' && s[i] != '='))
+                    continue;
+                ++i;
+                while (space(i))
+                    ++i;
+                char quote = 0;
+                if (i < s.size() && (s[i] == '"' || s[i] == '\''))
+                    quote = s[i++];
+                if (key == "authorization") {
+                    if (text.compare(i, 7, "bearer ") == 0)
+                        i += 7;
+                    else if (text.compare(i, 6, "basic ") == 0)
+                        i += 6;
+                    while (space(i))
+                        ++i;
+                }
+                const auto end = value_end(i, quote);
+                if (end > i)
+                    spans.emplace_back(i, end);
+            }
+        }
+        // Standalone bearer values and provider tokens may occur without an assignment.
+        size_t position = 0;
+        while ((position = text.find("bearer", position)) != string::npos) {
+            size_t i = position + 6;
+            position = i;
+            if (!space(i))
+                continue;
+            while (space(i))
+                ++i;
+            auto end = value_end(i, 0);
+            if (end > i)
+                spans.emplace_back(i, end);
+        }
+        for (const string prefix : {"ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "akia"}) {
+            position = 0;
+            while ((position = text.find(prefix, position)) != string::npos) {
+                size_t end = position + prefix.size();
+                while (end < s.size() && (std::isalnum(static_cast<unsigned char>(s[end])) || s[end] == '_'))
+                    ++end;
+                if (end - position - prefix.size() >= 16)
+                    spans.emplace_back(position, end);
+                position = end;
+            }
+        }
+        for (const string scheme : {"http://", "https://"}) {
+            position = 0;
+            while ((position = text.find(scheme, position)) != string::npos) {
+                const auto start = position + scheme.size();
+                auto end = start;
+                while (end < s.size() && s[end] != '/' && !space(end) && s[end] != '"' && s[end] != '\'')
+                    ++end;
+                const auto at = s.find('@', start), colon = s.find(':', start);
+                if (at < end && colon < at)
+                    spans.emplace_back(start, at);
+                position = end;
+            }
+        }
+        std::sort(spans.begin(), spans.end());
+        string out;
+        size_t copied = 0;
+        for (size_t i = 0; i < spans.size(); ++i) {
+            auto start = spans[i].first, end = spans[i].second;
+            while (i + 1 < spans.size() && spans[i + 1].first <= end)
+                end = std::max(end, spans[++i].second);
+            out.append(s, copied, start - copied);
+            out += "[REDACTED]";
+            copied = end;
+        }
+        out.append(s, copied, string::npos);
+        return out;
     }
 };
 string fingerprint(string s) {
     static const auto timestamp = rx("^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:.+Z-]+[[:space:]]*");
-    static const auto address = rx("\\b0x[0-9a-f]+\\b");
-    static const auto whitespace = rx("[[:space:]]+");
-    s = std::regex_replace(s, timestamp, "");
-    s = std::regex_replace(s, address, "<address>");
-    return std::regex_replace(s, whitespace, " ");
+    const auto prefix = s.substr(0, 128);
+    s = std::regex_replace(prefix, timestamp, "") + s.substr(prefix.size());
+    string out;
+    bool previous_space = false;
+    for (size_t i = 0; i < s.size(); ++i) {
+        const bool space = std::isspace(static_cast<unsigned char>(s[i])) != 0;
+        if (space) {
+            if (!previous_space)
+                out += ' ';
+        } else if (s[i] == '0' && i + 2 < s.size() && (s[i + 1] == 'x' || s[i + 1] == 'X') &&
+                   std::isxdigit(static_cast<unsigned char>(s[i + 2])) &&
+                   (i == 0 || (!std::isalnum(static_cast<unsigned char>(s[i - 1])) && s[i - 1] != '_'))) {
+            out += "<address>";
+            i += 2;
+            while (i + 1 < s.size() && std::isxdigit(static_cast<unsigned char>(s[i + 1])))
+                ++i;
+        } else
+            out += s[i];
+        previous_space = space;
+    }
+    return out;
 }
 bool success_line(const string &s) {
     if (!contains_any(lower(s), {"succeeded", "success", "passed", "ok", "exit code 0", "tests run:"}))
         return false;
     static const auto pattern =
         rx("\\*\\* (?:BUILD|TEST|ARCHIVE|EXPORT) SUCCEEDED \\*\\*|BUILD SUCCESSFUL|BUILD SUCCESS(?:[[:space:]]|$)|100% "
-           "tests passed|^OK(?:[[:space:]]|$)|Process completed with exit code 0(?:[^0-9]|$)|^Tests run: [0-9]+, "
+           "tests passed|^OK(?:[[:space:]]*\\([^)]*\\))?[[:space:]]*$|Process completed with exit code "
+           "0(?:[^0-9]|$)|^Tests run: [0-9]+, "
            "Failures: 0, Errors: 0|^[0-9]+ passed(?: in |$)");
-    return std::regex_search(s, pattern);
+    return matches(s, pattern);
 }
 string detect_format(const string &s, string current) {
     if (current != "generic")
@@ -338,7 +471,7 @@ struct Args {
     string command, db, file, name, format = "auto", text, exit_file;
     long long source = 0, limit = 10, offset = 0, line = 1, before = 3, after = 3;
     std::optional<int> exit_code;
-    bool redact = true, fts = false;
+    bool redact = true, fts = false, human = false;
     string severity;
 };
 long long integer(const string &s, long long min, long long max) {
@@ -389,13 +522,16 @@ Args parse(int argc, char **argv) {
             a.redact = false;
         else if (s == "--fts")
             a.fts = true;
+        else if (s == "--human")
+            a.human = true;
         else if (s == "--help" || s == "-h")
             a.command = "help";
         else if (s == "--version")
             a.command = "version";
         else if (a.command.empty())
             a.command = s;
-        else if (a.command == "ingest" && a.file.empty() && (s == "-" || s[0] != '-'))
+        else if ((a.command == "ingest" || a.command == "analyze") && a.file.empty() &&
+                 (s == "-" || (!s.empty() && s[0] != '-')))
             a.file = s;
         else
             throw std::runtime_error("Unknown argument: " + s);
@@ -409,6 +545,8 @@ Args parse(int argc, char **argv) {
         throw std::runtime_error("Severity must be error or warning");
     if (a.text.size() > 1024 || a.name.size() > 512)
         throw std::runtime_error("Text/name exceeds input limit");
+    if (a.human && a.command != "analyze" && a.command != "explain")
+        throw std::runtime_error("--human is available for analyze and explain");
     return a;
 }
 long long source_id(Database &db, long long id) {
@@ -500,22 +638,27 @@ long long ingest(Database &db, Args &a) {
                 index->step();
                 index->reset();
             }
-            if (!contains_any(lower(text), {"error",          "fatal",         "critical",
-                                            "warn",           "fail",          "exception",
-                                            "crash",          "segmentation",  "segfault",
-                                            "bus error",      "sigsegv",       "sigabrt",
-                                            "sigbus",         "sigill",        "sigfpe",
-                                            "sanitizer",      "traceback",     "panic",
-                                            "undefined",      "unresolved",    "duplicate symbol",
-                                            "cannot find -l", "build stopped", "termination"}))
+            if (!contains_any(lower(text), {"error",          "fatal",          "critical",
+                                            "warn",           "fail",           "exception",
+                                            "crash",          "segmentation",   "segfault",
+                                            "bus error",      "sigsegv",        "sigabrt",
+                                            "sigbus",         "sigill",         "sigfpe",
+                                            "sanitizer",      "traceback",      "panic",
+                                            "undefined",      "unresolved",     "duplicate symbol",
+                                            "cannot find -l", "build stopped",  "termination",
+                                            "could not find", "no module named"}))
                 continue;
             for (const auto &rule : rules()) {
-                if (!std::regex_search(text, rule.pattern))
+                size_t position = 0;
+                if (!matches(text, rule.pattern, &position))
                     continue;
                 issue.bind(1, id);
                 issue.bind(2, rule.severity);
                 issue.bind(3, rule.id);
-                issue.bind(4, clip(text, 2000));
+                // Keep the matching diagnostic visible even when a long command
+                // or structured prefix precedes it on the physical line.
+                const auto excerpt = position > 300 ? "..." + text.substr(position - 100) : text;
+                issue.bind(4, clip(excerpt, 2000));
                 issue.bind(5, fingerprint(text));
                 issue.bind(6, total);
                 issue.bind(7, total);
@@ -595,8 +738,8 @@ Outcome outcome(Database &db, long long id) {
 }
 string issue_json(const Statement &q, bool compact = false) {
     return "{\"id\":" + std::to_string(q.num(0)) + ",\"severity\":" + json(q.str(1)) + ",\"rule\":" + json(q.str(2)) +
-           ",\"message\":" + json(clip(q.str(3), compact ? 500 : 1500)) +
-           ",\"message_truncated\":" + (q.str(3).size() > (compact ? 500u : 1500u) ? "true" : "false") +
+           ",\"message\":" + json(clip(q.str(3), compact ? 500 : 1500)) + ",\"message_truncated\":" +
+           (q.str(3).size() > (compact ? 500u : 1500u) || q.str(3).rfind("...", 0) == 0 ? "true" : "false") +
            ",\"first_line\":" + std::to_string(q.num(4)) + ",\"last_line\":" + std::to_string(q.num(5)) +
            ",\"count\":" + std::to_string(q.num(6)) + "}";
 }
@@ -629,6 +772,157 @@ string summary(Database &db, long long id) {
     out += "],\"next\":{\"issues\":\"issues --source " + std::to_string(id) + "\",\"context\":\"context --source " +
            std::to_string(id) + " --line <first_line>\"}}";
     return out;
+}
+struct Advice {
+    string interpretation;
+    std::vector<string> checks;
+};
+Advice advice(const string &rule, const string &message) {
+    const auto text = lower(message);
+    if (rule == "dependency.missing") {
+        Advice a{"A required header, module, or package could not be found.",
+                 {"Check that the dependency is installed in the failing job and that its include or module search "
+                  "paths are configured."}};
+        if (text.find("sqlite3.h") != string::npos)
+            a.checks.push_back("For sqlite3.h on Debian/Ubuntu, check the libsqlite3-dev package; other platforms need "
+                               "their SQLite development package.");
+        else if (text.find("no module named") != string::npos || text.find("modulenotfounderror") != string::npos)
+            a.checks.push_back("Check the Python interpreter, virtual environment, and dependency installation step "
+                               "used by this job.");
+        return a;
+    }
+    if (rule == "compiler.error")
+        return {"The compiler rejected the source or its build configuration.",
+                {"Start with the reported source location and diagnostic; fix it before investigating later "
+                 "build-stopped messages."}};
+    if (rule == "linker.error")
+        return {"The linker could not resolve the program's symbols or libraries.",
+                {"Check linked libraries, symbol definitions, library order, and architecture compatibility."}};
+    if (rule == "crash.signal" || rule == "crash.apple")
+        return {"The log contains crash or sanitizer evidence.",
+                {"Inspect the crashed thread, stack trace, or sanitizer report near this line before choosing a fix."}};
+    if (rule == "test.failed")
+        return {"A test or test suite reported a failure.",
+                {"Inspect the failing test's assertion and expected versus actual result; rerun that test in the same "
+                 "environment."}};
+    if (rule == "exception.unhandled")
+        return {"The program reported an unhandled exception or panic.",
+                {"Read the surrounding stack trace and final exception message to identify the failing operation."}};
+    if (rule == "compiler.warning" || rule == "log.warning" || rule == "github.warning")
+        return {"The log contains a warning that may need attention.",
+                {"Review the warning in context; a warning alone does not establish that the process failed."}};
+    if (rule == "build.failed" || rule == "github.error")
+        return {"The build or CI runner reported a failure; this message may describe a consequence.",
+                {"Look earlier in this job for a compiler error, exception, failed assertion, or missing dependency."}};
+    return {"The program emitted an error diagnostic.",
+            {"Inspect the surrounding operation and any stack trace; the log alone may not establish the underlying "
+             "cause."}};
+}
+string string_array(const std::vector<string> &items) {
+    string out = "[";
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (i)
+            out += ',';
+        out += json(items[i]);
+    }
+    return out + ']';
+}
+string explain(Database &db, long long id, bool human) {
+    const auto o = outcome(db, id);
+    Statement source(db.db, "SELECT name,lines,truncated_lines,exit_code FROM sources WHERE id=?");
+    source.bind(1, id);
+    source.step();
+    string answer;
+    if (o.outcome == "failed")
+        answer = "The build or run failed.";
+    else if (o.outcome == "passed")
+        answer = o.warnings ? "The build or run completed successfully, with warnings."
+                            : "The build or run completed successfully; no error patterns were detected.";
+    else
+        answer = "The log does not establish a successful outcome. " + o.reason + ".";
+    // Rank specific diagnostics ahead of generic failure markers. This selects
+    // evidence for investigation; it does not prove a root cause.
+    Statement q(db.db,
+                "SELECT id,severity,rule,message,first_line,last_line,count FROM issues WHERE source_id=? ORDER BY "
+                "CASE severity WHEN 'error' THEN 0 ELSE 1 END, CASE rule "
+                "WHEN 'dependency.missing' THEN 0 WHEN 'linker.error' THEN 1 WHEN 'compiler.error' THEN 2 "
+                "WHEN 'crash.signal' THEN 3 WHEN 'crash.apple' THEN 3 WHEN 'log.error' THEN 4 "
+                "WHEN 'test.failed' THEN 5 WHEN 'exception.unhandled' THEN 6 WHEN 'github.error' THEN 7 "
+                "WHEN 'build.failed' THEN 8 ELSE 9 END,first_line LIMIT 3");
+    q.bind(1, id);
+    string items = "[", human_details;
+    long long primary_line = 0;
+    int count = 0;
+    while (q.step()) {
+        const auto a = advice(q.str(2), q.str(3));
+        if (!primary_line) {
+            primary_line = q.num(4);
+            answer += " " + a.interpretation;
+        }
+        if (count++)
+            items += ',';
+        string item = issue_json(q, true);
+        item.pop_back();
+        items += item + ",\"interpretation\":" + json(a.interpretation) +
+                 ",\"suggested_checks\":" + string_array(a.checks) + "}";
+        human_details += "\n" + string(count == 1 ? "Start here" : "Also reported") + " (log line " +
+                         std::to_string(q.num(4)) + ", " + q.str(2) + "):\n  " + clip(q.str(3), 500) + "\n";
+        if (count == 1)
+            for (const auto &check : a.checks)
+                human_details += "  Check: " + check + "\n";
+    }
+    items += ']';
+    std::vector<string> checks;
+    if (!primary_line && o.outcome == "failed")
+        checks.push_back("The process exited unsuccessfully without a recognized error diagnostic; inspect its final "
+                         "output and command-specific exit code.");
+    if (o.outcome == "unknown")
+        checks.push_back(
+            "Obtain the complete job log and its exit code, or capture the command with logsonfire-agent run.");
+    if (source.num(2))
+        checks.push_back(
+            "Oversized lines were truncated; inspect the original log for evidence omitted from analysis.");
+    string context = "[", human_context;
+    if (primary_line) {
+        Statement lines(db.db,
+                        "SELECT number,text FROM lines WHERE source_id=? AND number BETWEEN ? AND ? ORDER BY number");
+        lines.bind(1, id);
+        lines.bind(2, std::max(1LL, primary_line - 2));
+        lines.bind(3, primary_line + 2);
+        bool first = true;
+        while (lines.step()) {
+            const auto text = lines.str(1);
+            if (!first)
+                context += ',';
+            first = false;
+            context += "{\"line\":" + std::to_string(lines.num(0)) + ",\"text\":" + json(clip(text, 300)) +
+                       ",\"truncated\":" + (text.size() > 300 ? "true" : "false") + "}";
+            human_context += "  " + std::to_string(lines.num(0)) + " | " + clip(text, 300) + "\n";
+        }
+    }
+    context += ']';
+    if (human) {
+        string out = answer + "\nSource: " + source.str(0) + " (ID " + std::to_string(id) + ", " +
+                     std::to_string(source.num(1)) + " lines)\n" + std::to_string(o.errors) + " error lines, " +
+                     std::to_string(o.warnings) + " warning lines, " + std::to_string(o.groups) +
+                     " distinct issues.\n" + human_details;
+        for (const auto &check : checks)
+            out += "\nCheck: " + check + "\n";
+        if (!human_context.empty())
+            out += "\nEvidence around the first suggested diagnostic:\n" + human_context;
+        return out + "\nMore: logsonfire context --source " + std::to_string(id) + " --line " +
+               std::to_string(primary_line ? primary_line : 1);
+    }
+    return "{\"schema_version\":1,\"source_id\":" + std::to_string(id) + ",\"name\":" + json(source.str(0)) +
+           ",\"status\":" + json(o.status) + ",\"outcome\":" + json(o.outcome) + ",\"answer\":" + json(answer) +
+           ",\"analysis\":\"rule_based\",\"reason\":" + json(o.reason) + ",\"exit_code\":" +
+           (sqlite3_column_type(source.stmt, 3) == SQLITE_NULL ? "null" : std::to_string(source.num(3))) +
+           ",\"lines\":" + std::to_string(source.num(1)) + ",\"truncated_lines\":" + std::to_string(source.num(2)) +
+           ",\"errors\":" + std::to_string(o.errors) + ",\"warnings\":" + std::to_string(o.warnings) +
+           ",\"issue_groups\":" + std::to_string(o.groups) + ",\"findings\":" + items +
+           ",\"suggested_checks\":" + string_array(checks) + ",\"context\":" + context +
+           ",\"next\":{\"issues\":\"issues --source " + std::to_string(id) + "\",\"context\":\"context --source " +
+           std::to_string(id) + " --line " + std::to_string(primary_line ? primary_line : 1) + "\"}}";
 }
 string issues(Database &db, const Args &a, long long id) {
     string where = " WHERE source_id=?";
@@ -742,16 +1036,21 @@ int run_main(int argc, char **argv) {
         }
         if (a.command == "help" || a.command == "schema") {
             std::cout
-                << R"({"schema_version":1,"name":"logsonfire","commands":{"ingest":"FILE|- [--name NAME] [--format auto|generic|github|xcode|crash|python|build] [--exit-code 0..255] [--no-redact]","summary":"[--source ID]","check":"[--source ID]; exit 0=passed, 1=failed, 2=unknown/tool error","sources":"[--limit 1..100] [--offset N]","issues":"[--source ID] [--severity error|warning] [--limit 1..100] [--offset N]","context":"[--source ID] --line N [--before 0..49] [--after 0..49]","search":"[--source ID] --text TEXT [--fts] [--limit 1..100] [--offset N]"},"global":"--db PATH or LOGSONFIRE_DB; default .logsonfire/logs.db","defaults":"latest source; JSON only; responses <=32768 bytes; summary <=5 issues","workflow":["ingest","summary","issues if needed","context at first_line"]})"
+                << R"({"schema_version":1,"name":"logsonfire","commands":{"analyze":"FILE|- [--human] [--name NAME] [--format FORMAT] [--exit-code 0..255]","explain":"[--source ID] [--human]","ingest":"FILE|- [--name NAME] [--format auto|generic|github|xcode|crash|python|build] [--exit-code 0..255] [--no-redact]","summary":"[--source ID]","check":"[--source ID]; exit 0=passed, 1=failed, 2=unknown/tool error","sources":"[--limit 1..100] [--offset N]","issues":"[--source ID] [--severity error|warning] [--limit 1..100] [--offset N]","context":"[--source ID] --line N [--before 0..49] [--after 0..49]","search":"[--source ID] --text TEXT [--fts] [--limit 1..100] [--offset N]"},"global":"--db PATH or LOGSONFIRE_DB; default .logsonfire/logs.db","defaults":"latest source; JSON by default; analyze/explain support --human; responses <=32768 bytes; summary <=5 issues","workflow":["ingest","summary","issues if needed","context at first_line"]})"
                 << '\n';
             return 0;
         }
-        const std::vector<string> commands = {"ingest", "summary", "check", "sources", "issues", "context", "search"};
+        const std::vector<string> commands = {"ingest",  "analyze", "explain", "summary", "check",
+                                              "sources", "issues",  "context", "search"};
         if (std::find(commands.begin(), commands.end(), a.command) == commands.end())
             throw std::runtime_error("Unknown command: " + a.command);
         Database db(a.db);
         if (a.command == "ingest") {
             std::cout << summary(db, ingest(db, a)) << '\n';
+            return 0;
+        }
+        if (a.command == "analyze") {
+            std::cout << explain(db, ingest(db, a), a.human) << '\n';
             return 0;
         }
         if (a.command == "sources") {
@@ -765,7 +1064,9 @@ int run_main(int argc, char **argv) {
                 auto o = outcome(db, id);
                 return o.outcome == "passed" ? 0 : (o.outcome == "failed" ? 1 : 2);
             }
-        } else if (a.command == "issues")
+        } else if (a.command == "explain")
+            std::cout << explain(db, id, a.human) << '\n';
+        else if (a.command == "issues")
             std::cout << issues(db, a, id) << '\n';
         else
             std::cout << lines(db, a, id, a.command == "search") << '\n';
