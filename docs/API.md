@@ -32,7 +32,7 @@ availability, not a build outcome. The server's database is fixed at startup.
 | `outcome` | `passed`, `failed`, or `unknown` |
 | `status` | `ok`, `warning`, `error`, or `unknown` |
 | `reason` | Human-readable basis for the decision |
-| `exit_code` | Supplied/captured exit status, or `null` if unavailable |
+| `exit_code` | Supplied/captured status (0–4294967295, including Windows exception codes), or `null` if unavailable |
 | `lines`, `input_bytes` | Physical input line and byte counts |
 | `truncated_lines` | Number of physical lines exceeding the ingestion cap |
 | `redacted_lines`, `redaction_enabled` | Redaction activity and policy |

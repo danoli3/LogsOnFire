@@ -126,7 +126,7 @@ class Client:
                         sys.stderr.buffer.write(data)
                         sys.stderr.buffer.flush()
                 code = child.wait()
-                code = min(255, code if code >= 0 else 128 - code)
+                code = code if code >= 0 else 128 - code
                 exit_file.write_text(str(code), encoding="ascii")
                 parser.stdin.close()
                 parser.stdin = None
@@ -291,4 +291,14 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    result = main()
+    if os.name == "nt" and result > 0x7fffffff:
+        # SystemExit converts through a signed C int. Preserve the full Windows
+        # DWORD status when a captured process exits with an exception code.
+        import ctypes
+        sys.stdout.flush()
+        sys.stderr.flush()
+        exit_process = ctypes.windll.kernel32.ExitProcess
+        exit_process.argtypes = [ctypes.c_uint32]
+        exit_process(result)
+    sys.exit(result)

@@ -2,6 +2,7 @@
 import concurrent.futures
 import io
 import json
+import os
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -133,6 +134,24 @@ class SystemTests(unittest.TestCase):
         self.assertEqual(report["outcome"], "failed")
         self.assertEqual(report["errors"], 0)
         self.assertEqual(report["exit_code"], 7)
+
+    def test_windows_exception_status_preserved_in_reports(self):
+        report = self.ingest("process stopped\n", "--exit-code", "3221225477")
+        self.assertEqual(report["exit_code"], 3221225477)
+        self.assertEqual(self.client.explain()["exit_code"], 3221225477)
+        self.cli("ingest", "-", "--exit-code", "4294967296", data=b"", code=2)
+
+    @unittest.skipUnless(os.name == "nt", "Windows native process status")
+    def test_capture_windows_exception_status(self):
+        code, report = self.client.capture([sys.executable, "-c", "import ctypes; ctypes.windll.kernel32.ExitProcess(0xC0000005)"], quiet=True)
+        self.assertEqual(code, 3221225477)
+        self.assertEqual(report["exit_code"], code)
+        self.assertEqual(report["outcome"], "failed")
+        run = subprocess.run([sys.executable, str(ROOT / "python/logsonfire.py"), "--binary", BINARY, "--db", self.db,
+                              "run", "--quiet", "--", sys.executable, "-c",
+                              "import ctypes; ctypes.windll.kernel32.ExitProcess(0xC0000005)"], capture_output=True)
+        self.assertEqual(run.returncode, code)
+        self.assertEqual(json.loads(run.stdout)["exit_code"], code)
 
     def test_exit_zero(self):
         self.assertEqual(self.ingest("", "--exit-code", "0")["status"], "ok")

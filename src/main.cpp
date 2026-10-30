@@ -470,7 +470,7 @@ string detect_format(const string &s, string current) {
 struct Args {
     string command, db, file, name, format = "auto", text, exit_file;
     long long source = 0, limit = 10, offset = 0, line = 1, before = 3, after = 3;
-    std::optional<int> exit_code;
+    std::optional<long long> exit_code;
     bool redact = true, fts = false, human = false;
     string severity;
 };
@@ -515,7 +515,7 @@ Args parse(int argc, char **argv) {
         else if (s == "--severity")
             a.severity = value();
         else if (s == "--exit-code")
-            a.exit_code = static_cast<int>(integer(value(), 0, 255));
+            a.exit_code = integer(value(), 0, 4294967295LL);
         else if (s == "--exit-code-file")
             a.exit_file = value();
         else if (s == "--no-redact")
@@ -674,7 +674,7 @@ long long ingest(Database &db, Args &a) {
             string code;
             if (!(codefile >> code))
                 throw std::runtime_error("Capture did not supply an exit code");
-            a.exit_code = static_cast<int>(integer(code, 0, 255));
+            a.exit_code = integer(code, 0, 4294967295LL);
         }
         Statement update(
             db.db, "UPDATE sources SET "
@@ -1070,7 +1070,7 @@ int run_main(int argc, char **argv) {
         }
         if (a.command == "help" || a.command == "schema") {
             std::cout
-                << R"({"schema_version":1,"name":"logsonfire","commands":{"analyze":"FILE|- [--human] [--name NAME] [--format FORMAT] [--exit-code 0..255]","explain":"[--source ID] [--human]","ingest":"FILE|- [--name NAME] [--format auto|generic|github|xcode|crash|python|build] [--exit-code 0..255] [--no-redact]","summary":"[--source ID]","check":"[--source ID]; exit 0=passed, 1=failed, 2=unknown/tool error","sources":"[--limit 1..100] [--offset N]","issues":"[--source ID] [--severity error|warning] [--limit 1..100] [--offset N]","context":"[--source ID] --line N [--before 0..49] [--after 0..49]","search":"[--source ID] --text TEXT [--fts] [--limit 1..100] [--offset N]"},"global":"--db PATH or LOGSONFIRE_DB; default .logsonfire/logs.db","defaults":"latest source; JSON by default; analyze/explain support --human; responses <=32768 bytes; summary <=5 issues","workflow":["ingest","summary","issues if needed","context at first_line"]})"
+                << R"({"schema_version":1,"name":"logsonfire","commands":{"analyze":"FILE|- [--human] [--name NAME] [--format FORMAT] [--exit-code 0..4294967295]","explain":"[--source ID] [--human]","ingest":"FILE|- [--name NAME] [--format auto|generic|github|xcode|crash|python|build] [--exit-code 0..4294967295] [--no-redact]","summary":"[--source ID]","check":"[--source ID]; exit 0=passed, 1=failed, 2=unknown/tool error","sources":"[--limit 1..100] [--offset N]","issues":"[--source ID] [--severity error|warning] [--limit 1..100] [--offset N]","context":"[--source ID] --line N [--before 0..49] [--after 0..49]","search":"[--source ID] --text TEXT [--fts] [--limit 1..100] [--offset N]"},"global":"--db PATH or LOGSONFIRE_DB; default .logsonfire/logs.db","defaults":"latest source; JSON by default; analyze/explain support --human; responses <=32768 bytes; summary <=5 issues","workflow":["ingest","summary","issues if needed","context at first_line"]})"
                 << '\n';
             return 0;
         }

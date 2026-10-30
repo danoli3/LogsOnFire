@@ -143,7 +143,8 @@ The wrapper streams merged stdout/stderr to the C++ parser. It writes no tempora
 raw log. Live output goes to **stderr**; one JSON report goes to **stdout**. The
 wrapper returns the captured process's exit code. If capturing or saving fails,
 it returns a tool error instead. On POSIX, a signal maps to `128 + signal`.
-Windows exit codes above 255 are clamped to 255.
+Windows process exit codes retain their full unsigned 32-bit value in the report
+and Python result, including exception status codes.
 
 On Windows, use `scripts/logsonfire-agent.ps1 run --quiet -- COMMAND ...` or run
 `python python/logsonfire.py run --quiet -- COMMAND ...`. After installation,
