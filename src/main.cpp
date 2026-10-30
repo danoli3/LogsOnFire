@@ -1123,14 +1123,14 @@ string explain(Database &db, long long id, bool human) {
         frames.bind(2, primary_line);
         frames.step();
         const auto root = envelope(frames.str(0));
-        Statement near(db.db,
-                       "SELECT number,text FROM lines WHERE source_id=? AND number BETWEEN ? AND ? ORDER BY number");
-        near.bind(1, id);
-        near.bind(2, primary_line);
-        near.bind(3, primary_line + 32);
+        Statement nearby_lines(
+            db.db, "SELECT number,text FROM lines WHERE source_id=? AND number BETWEEN ? AND ? ORDER BY number");
+        nearby_lines.bind(1, id);
+        nearby_lines.bind(2, primary_line);
+        nearby_lines.bind(3, primary_line + 32);
         int count = 0;
-        while (near.step() && count < 8) {
-            const auto text = near.str(1);
+        while (nearby_lines.step() && count < 8) {
+            const auto text = nearby_lines.str(1);
             if (text.empty())
                 break;
             const auto item = envelope(text);
@@ -1139,9 +1139,9 @@ string explain(Database &db, long long id, bool human) {
             if (count)
                 crash_context += ',';
             ++count;
-            crash_context += "{\"line\":" + std::to_string(near.num(0)) + ",\"text\":" + json(clip(text, 300)) +
+            crash_context += "{\"line\":" + std::to_string(nearby_lines.num(0)) + ",\"text\":" + json(clip(text, 300)) +
                              ",\"truncated\":" + (text.size() > 300 ? "true" : "false") + "}";
-            human_crash_context += "  " + std::to_string(near.num(0)) + " | " + clip(text, 300) + "\n";
+            human_crash_context += "  " + std::to_string(nearby_lines.num(0)) + " | " + clip(text, 300) + "\n";
         }
     } else if (primary_rule == "crash.signal" || primary_rule == "crash.apple") {
         Statement header(db.db, "SELECT number FROM lines WHERE source_id=? AND number BETWEEN ? AND ? AND "
