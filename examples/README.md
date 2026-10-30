@@ -71,3 +71,17 @@ for finding in report["findings"]:
 
 The fixture is synthetic and safe to share. It illustrates a real class of CI
 failure without containing credentials or relying on a live GitHub run.
+
+## Evaluate crash analysis
+
+`ci-linux-crash.log` is a real public CI failure from this project's first Linux
+run. `macos-crash.crash` is a synthetic Apple crash report. Compare their raw sizes
+with the analyzer's reports:
+
+```sh
+python3 examples/evaluate.py --binary build/logsonfire \
+  examples/ci-linux-crash.log examples/macos-crash.crash
+```
+
+See [the evaluation report](../docs/EVALUATION.md) for what helped Codex, what it
+could not determine, and why very small inputs can produce larger JSON reports.

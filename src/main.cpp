@@ -850,13 +850,14 @@ string explain(Database &db, long long id, bool human) {
                 "WHEN 'test.failed' THEN 5 WHEN 'exception.unhandled' THEN 6 WHEN 'github.error' THEN 7 "
                 "WHEN 'build.failed' THEN 8 ELSE 9 END,first_line LIMIT 3");
     q.bind(1, id);
-    string items = "[", human_details;
+    string items = "[", human_details, primary_rule;
     long long primary_line = 0;
     int count = 0;
     while (q.step()) {
         const auto a = advice(q.str(2), q.str(3));
         if (!primary_line) {
             primary_line = q.num(4);
+            primary_rule = q.str(2);
             answer += " " + a.interpretation;
         }
         if (count++)
@@ -901,6 +902,36 @@ string explain(Database &db, long long id, bool human) {
         }
     }
     context += ']';
+    string crash_context = "[", human_crash_context;
+    if (primary_rule == "crash.signal" || primary_rule == "crash.apple") {
+        Statement header(db.db, "SELECT number FROM lines WHERE source_id=? AND number BETWEEN ? AND ? AND "
+                                "(instr(lower(text),'crashed:')>0 OR instr(lower(text),'stack trace:')>0 OR "
+                                "instr(lower(text),'stacktrace:')>0) "
+                                "ORDER BY number LIMIT 1");
+        header.bind(1, id);
+        header.bind(2, primary_line);
+        header.bind(3, primary_line + 200);
+        if (header.step()) {
+            Statement frames(
+                db.db, "SELECT number,text FROM lines WHERE source_id=? AND number BETWEEN ? AND ? ORDER BY number");
+            frames.bind(1, id);
+            frames.bind(2, header.num(0));
+            frames.bind(3, header.num(0) + 7);
+            bool first = true;
+            while (frames.step()) {
+                const auto text = frames.str(1);
+                if (!first && text.empty())
+                    break;
+                if (!first)
+                    crash_context += ',';
+                first = false;
+                crash_context += "{\"line\":" + std::to_string(frames.num(0)) + ",\"text\":" + json(clip(text, 300)) +
+                                 ",\"truncated\":" + (text.size() > 300 ? "true" : "false") + "}";
+                human_crash_context += "  " + std::to_string(frames.num(0)) + " | " + clip(text, 300) + "\n";
+            }
+        }
+    }
+    crash_context += ']';
     if (human) {
         string out = answer + "\nSource: " + source.str(0) + " (ID " + std::to_string(id) + ", " +
                      std::to_string(source.num(1)) + " lines)\n" + std::to_string(o.errors) + " error lines, " +
@@ -910,6 +941,8 @@ string explain(Database &db, long long id, bool human) {
             out += "\nCheck: " + check + "\n";
         if (!human_context.empty())
             out += "\nEvidence around the first suggested diagnostic:\n" + human_context;
+        if (!human_crash_context.empty())
+            out += "\nCrashed thread or stack trace:\n" + human_crash_context;
         return out + "\nMore: logsonfire context --source " + std::to_string(id) + " --line " +
                std::to_string(primary_line ? primary_line : 1);
     }
@@ -921,8 +954,9 @@ string explain(Database &db, long long id, bool human) {
            ",\"errors\":" + std::to_string(o.errors) + ",\"warnings\":" + std::to_string(o.warnings) +
            ",\"issue_groups\":" + std::to_string(o.groups) + ",\"findings\":" + items +
            ",\"suggested_checks\":" + string_array(checks) + ",\"context\":" + context +
-           ",\"next\":{\"issues\":\"issues --source " + std::to_string(id) + "\",\"context\":\"context --source " +
-           std::to_string(id) + " --line " + std::to_string(primary_line ? primary_line : 1) + "\"}}";
+           ",\"crash_context\":" + crash_context + ",\"next\":{\"issues\":\"issues --source " + std::to_string(id) +
+           "\",\"context\":\"context --source " + std::to_string(id) + " --line " +
+           std::to_string(primary_line ? primary_line : 1) + "\"}}";
 }
 string issues(Database &db, const Args &a, long long id) {
     string where = " WHERE source_id=?";

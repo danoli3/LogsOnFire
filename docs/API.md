@@ -58,6 +58,11 @@ and `suggested_checks`. Each finding also has an `interpretation` and
 `suggested_checks`. Specific error diagnostics are selected ahead of general
 build/CI failure markers. These are investigation leads, not proven root causes.
 
+For a primary crash finding, `crash_context` contains up to eight lines at a
+nearby crashed-thread or stack-trace header, selected from the next 200 physical
+lines. It is empty if no such header is found. As with ordinary explanation
+context, each line is clipped at 300 bytes with a truncation flag.
+
 `analyze --human` and `explain --human` opt into readable terminal output. Other
 native operations remain JSON-only. Both analysis commands return 0 when the
 operation succeeds, including when the log reports a failed build.

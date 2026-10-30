@@ -85,6 +85,21 @@ class SystemTests(unittest.TestCase):
         self.assertEqual(self.client.explain()["findings"][0]["rule"], "compiler.error")
         self.cli("summary", "--human", code=2)
 
+    def test_real_ci_crash_log_retains_assertion_and_failing_test(self):
+        report = self.client.analyze(ROOT / "examples/ci-linux-crash.log")
+        self.assertEqual(report["outcome"], "failed")
+        self.assertIn("AssertionError: -11", report["findings"][0]["message"])
+        self.assertTrue(any("test_long_diagnostic_and_credential_lines" in item["message"] for item in report["findings"]))
+        self.assertTrue(any("result.returncode" in row["text"] for row in report["context"]))
+
+    def test_apple_crash_report_surfaces_crashed_thread_frames(self):
+        report = self.client.analyze(ROOT / "examples/macos-crash.crash")
+        self.assertEqual(report["outcome"], "failed")
+        self.assertEqual(report["findings"][0]["rule"], "crash.signal")
+        self.assertIn("SIGSEGV", report["findings"][0]["message"])
+        self.assertTrue(any("parse_record" in row["text"] for row in report["crash_context"]))
+        self.assertTrue(any("Thread 0 Crashed" in row["text"] for row in report["crash_context"]))
+
     def test_analyze_stdin_is_bounded(self):
         report = self.cli("analyze", "-", data=("error: " + '"' * 60000 + "\n").encode())
         self.assertEqual(report["outcome"], "failed")

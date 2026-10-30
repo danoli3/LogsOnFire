@@ -22,6 +22,9 @@ what to check, and shows a small evidence window. In the included example, it
 surfaces the missing `sqlite3.h` header before the generic CI failure messages.
 Omit `--human` for compact JSON an AI agent can consume directly.
 
+The [crash-analysis evaluation](docs/EVALUATION.md) records a real self-test,
+measured response sizes, and current limitations.
+
 Use `logsonfire analyze YOUR_LOG.txt` for your own text log, or `logsonfire explain
 --source ID` to revisit saved evidence. See the [complete user/agent example](examples/README.md).
 

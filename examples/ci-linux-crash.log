@@ -1,0 +1,46 @@
+native (ubuntu-24.04, linux, x64)	Tests	﻿2026-10-30T22:38:32.8011046Z ##[group]Run ctest --test-dir build -C Release --output-on-failure
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:32.8011583Z ^[[36;1mctest --test-dir build -C Release --output-on-failure^[[0m
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:32.8033010Z shell: /usr/bin/bash -e {0}
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:32.8033264Z env:
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:32.8033534Z   pythonLocation: /opt/hostedtoolcache/Python/3.13.17/x64
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:32.8033984Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.13.17/x64/lib/pkgconfig
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:32.8034414Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.17/x64
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:32.8034799Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.17/x64
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:32.8035177Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.17/x64
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:32.8035560Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.13.17/x64/lib
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:32.8035886Z ##[endgroup]
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:33.1058817Z Internal ctest changing into directory: /home/runner/work/LogsOnFire/LogsOnFire/build
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:33.1678289Z Test project /home/runner/work/LogsOnFire/LogsOnFire/build
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:33.2068629Z     Start 1: integration
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2110702Z 1/2 Test #1: integration ......................***Failed    1.00 sec
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2111261Z .............F...........
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2111556Z ======================================================================
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2112431Z FAIL: test_long_diagnostic_and_credential_lines (__main__.SystemTests.test_long_diagnostic_and_credential_lines)
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2113051Z ----------------------------------------------------------------------
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2113434Z Traceback (most recent call last):
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2118676Z   File "/home/runner/work/LogsOnFire/LogsOnFire/tests/test_system.py", line 133, in test_long_diagnostic_and_credential_lines
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2119460Z     report = self.ingest("error: " + "x" * 65000 + "\ntoken=" + "y" * 65000 + "\n")
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2120071Z   File "/home/runner/work/LogsOnFire/LogsOnFire/tests/test_system.py", line 37, in ingest
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2120592Z     return self.cli("ingest", "-", *args, data=text)
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2120916Z            ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2121459Z   File "/home/runner/work/LogsOnFire/LogsOnFire/tests/test_system.py", line 30, in cli
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2122367Z     self.assertEqual(result.returncode, code, result.stdout.decode(errors="replace"))
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2122837Z     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2123168Z AssertionError: -11 != 0 : 
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2123329Z 
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2123598Z ----------------------------------------------------------------------
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2123979Z Ran 25 tests in 0.758s
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2124126Z 
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2124218Z FAILED (failures=1)
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2124342Z 
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2188808Z     Start 2: packaging
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2967199Z 2/2 Test #2: packaging ........................   Passed    0.08 sec
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2969825Z 
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2970041Z 50% tests passed, 1 tests failed out of 2
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2970387Z 
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2970555Z Total Test time (real) =   1.13 sec
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2970861Z 
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2970976Z The following tests FAILED:
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2973829Z 	  1 - integration (Failed)
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.2974524Z Errors while running CTest
+native (ubuntu-24.04, linux, x64)	Tests	2026-10-30T22:38:34.3314096Z ##[error]Process completed with exit code 8.
