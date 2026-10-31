@@ -1,0 +1,3 @@
+Command line invocation:
+    xcodebuild -scheme ExampleApp build
+** BUILD SUCCEEDED **

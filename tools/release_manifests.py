@@ -6,6 +6,9 @@ import json
 from pathlib import Path
 import re
 import zipfile
+import sys
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+from version import SEMVER
 
 
 def sha256(path):
@@ -21,31 +24,19 @@ def quoted(value):
     return json.dumps(value, ensure_ascii=True)
 
 
-def generate(repository, version, artifacts, output, package_id, publisher):
+def write_homebrew(repository,version,source,output,source_url=None):
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise ValueError("repository must be OWNER/REPO")
-    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
-        raise ValueError("version must be MAJOR.MINOR.PATCH")
-    if not re.fullmatch(r"[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+", package_id):
-        raise ValueError("package ID must contain dot-separated alphanumeric components")
+    if not SEMVER.fullmatch(version):
+        raise ValueError("version must be valid SemVer")
     base = f"https://github.com/{repository}"
-    downloads = f"{base}/releases/download/v{version}"
-    source = artifacts / f"logsonfire-{version}-source.tar.gz"
     if not source.is_file():
         raise ValueError(f"Missing source archive: {source}")
-    installers = []
-    for arch in ("x64", "arm64"):
-        archive = artifacts / f"logsonfire-{version}-windows-{arch}.zip"
-        if not archive.is_file():
-            raise ValueError(f"Missing Windows archive: {archive}")
-        with zipfile.ZipFile(archive) as package:
-            if "bin/logsonfire.exe" not in package.namelist():
-                raise ValueError(f"{archive}: missing bin/logsonfire.exe")
-        installers.append((arch, archive.name, sha256(archive).upper()))
+    url=source_url or f"{base}/releases/download/v{version}/{source.name}"
     formula = f'''class Logsonfire < Formula
   desc "Local log analysis and compact evidence for agents"
   homepage "{base}"
-  url "{downloads}/{source.name}"
+  url {quoted(url)}
   version "{version}"
   sha256 "{sha256(source)}"
   license "MIT"
@@ -62,13 +53,37 @@ def generate(repository, version, artifacts, output, package_id, publisher):
 
   test do
     (testpath/"ok.log").write("** BUILD SUCCEEDED **\\n")
-    assert_match '\"status\":\"ok\"', shell_output("#{{bin}}/logsonfire --db #{{testpath}}/logs.db ingest #{{testpath}}/ok.log")
+    assert_match '\"status\":\"ok\"', shell_output("#{{bin}}/logsonfire --output json --db #{{testpath}}/logs.db ingest #{{testpath}}/ok.log")
   end
 end
 '''
     formula_dir = output / "homebrew"
     formula_dir.mkdir(parents=True, exist_ok=True)
     (formula_dir / "logsonfire.rb").write_text(formula, encoding="utf-8")
+
+
+def generate(repository, version, artifacts, output, package_id, publisher):
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+        raise ValueError("repository must be OWNER/REPO")
+    if not SEMVER.fullmatch(version):
+        raise ValueError("version must be valid SemVer")
+    if not re.fullmatch(r"[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+", package_id):
+        raise ValueError("package ID must contain dot-separated alphanumeric components")
+    base=f"https://github.com/{repository}"
+    downloads=f"{base}/releases/download/v{version}"
+    source=artifacts/f"logsonfire-{version}-source.tar.gz"
+    if not source.is_file():
+        raise ValueError(f"Missing source archive: {source}")
+    installers=[]
+    for arch in ("x64","arm64"):
+        archive=artifacts/f"logsonfire-{version}-windows-{arch}.zip"
+        if not archive.is_file():
+            raise ValueError(f"Missing Windows archive: {archive}")
+        with zipfile.ZipFile(archive) as package:
+            if "bin/logsonfire.exe" not in package.namelist():
+                raise ValueError(f"{archive}: missing bin/logsonfire.exe")
+        installers.append((arch,archive.name,sha256(archive).upper()))
+    write_homebrew(repository,version,source,output)
     winget = output / "winget" / package_id.split(".")[0][0].lower() / Path(*package_id.split(".")) / version
     winget.mkdir(parents=True, exist_ok=True)
     common = f"PackageIdentifier: {package_id}\nPackageVersion: {quoted(version)}\n"
@@ -107,8 +122,13 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--package-id", default="LogsOnFire.LogsOnFire")
     parser.add_argument("--publisher", default="LogsOnFire contributors")
+    parser.add_argument("--homebrew-only",action="store_true")
+    parser.add_argument("--source-url",help="Override the source URL for an isolated local Homebrew smoke test")
     args = parser.parse_args()
-    generate(args.repository, args.version, args.artifacts, args.output, args.package_id, args.publisher)
+    if args.homebrew_only:
+        write_homebrew(args.repository,args.version,args.artifacts/f"logsonfire-{args.version}-source.tar.gz",args.output,args.source_url)
+    else:
+        generate(args.repository, args.version, args.artifacts, args.output, args.package_id, args.publisher)
 
 
 if __name__ == "__main__":

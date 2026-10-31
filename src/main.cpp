@@ -571,7 +571,7 @@ string detect_format(const string &s, string current, const Envelope &entry) {
 }
 
 struct Args {
-    string command, db, file, name, format = "auto", text, exit_file;
+    string command, db, file, name, format = "auto", text, exit_file, output = "json";
     long long source = 0, limit = 10, offset = 0, line = 1, before = 3, after = 3;
     std::optional<long long> exit_code;
     bool redact = true, fts = false, human = false;
@@ -584,8 +584,7 @@ long long integer(const string &s, long long min, long long max) {
         throw std::runtime_error("Integer out of range: " + s);
     return n;
 }
-Args parse(int argc, char **argv) {
-    Args a;
+void parse(Args &a, int argc, char **argv) {
     const char *env = std::getenv("LOGSONFIRE_DB");
     a.db = env ? env : ".logsonfire/logs.db";
     for (int i = 1; i < argc; ++i) {
@@ -613,6 +612,8 @@ Args parse(int argc, char **argv) {
             a.name = value();
         else if (s == "--format")
             a.format = value();
+        else if (s == "--output")
+            a.output = value();
         else if (s == "--text")
             a.text = value();
         else if (s == "--severity")
@@ -652,7 +653,8 @@ Args parse(int argc, char **argv) {
         throw std::runtime_error("Text/name exceeds input limit");
     if (a.human && a.command != "analyze" && a.command != "explain")
         throw std::runtime_error("--human is available for analyze and explain");
-    return a;
+    if (a.output != "json" && a.output != "text")
+        throw std::runtime_error("Output must be json or text");
 }
 long long source_id(Database &db, long long id) {
     Statement q(db.db, id ? "SELECT id FROM sources WHERE id=?" : "SELECT id FROM sources ORDER BY id DESC LIMIT 1");
@@ -1033,6 +1035,47 @@ string string_array(const std::vector<string> &items) {
     }
     return out + ']';
 }
+string prioritized_issues_sql() {
+    return "SELECT id,severity,rule,message,first_line,last_line,count FROM issues WHERE source_id=? ORDER BY "
+           "CASE severity WHEN 'error' THEN 0 ELSE 1 END, CASE rule "
+           "WHEN 'dependency.missing' THEN 0 WHEN 'exception.cause' THEN 0 WHEN 'xcode.signing' THEN 0 WHEN "
+           "'make.target' "
+           "THEN 1 WHEN 'linker.error' THEN 1 WHEN 'compiler.error' THEN 2 WHEN 'compiler.kotlin' THEN 2 "
+           "WHEN 'crash.signal' THEN 3 WHEN 'crash.apple' THEN 3 WHEN 'android.crash' THEN 3 WHEN 'vscode.extension' "
+           "THEN "
+           "1 WHEN 'cmake.error' THEN 3 WHEN 'gradle.failed' THEN 4 WHEN 'log.error' THEN 4 "
+           "WHEN 'test.failed' THEN 5 WHEN 'exception.unhandled' THEN 6 WHEN 'github.error' THEN 7 "
+           "WHEN 'build.failed' THEN 8 ELSE 9 END,first_line";
+}
+string brief_text(Database &db, long long id) {
+    const auto o = outcome(db, id);
+    Statement source(db.db, "SELECT exit_code,truncated_lines FROM sources WHERE id=?");
+    source.bind(1, id);
+    source.step();
+    string out;
+    if (o.errors) {
+        Statement problem(db.db, prioritized_issues_sql() + " LIMIT 1");
+        problem.bind(1, id);
+        problem.step();
+        out = "Error in logs is: " + clip(problem.str(3), 500);
+        if (o.errors > 1 || o.warnings)
+            out += "\n" + std::to_string(o.errors) + (o.errors == 1 ? " error" : " errors") +
+                   (o.warnings ? ", " + std::to_string(o.warnings) + (o.warnings == 1 ? " warning" : " warnings") : "");
+    } else if (o.outcome == "failed") {
+        out = "Error in logs is: process exited with code " + std::to_string(source.num(0)) +
+              "; no matching error message was found";
+        if (o.warnings)
+            out += "\n" + std::to_string(o.warnings) + (o.warnings == 1 ? " warning" : " warnings");
+    } else {
+        out = o.warnings ? "No errors, " + std::to_string(o.warnings) + (o.warnings == 1 ? " warning" : " warnings")
+                         : (o.outcome == "passed" ? "No errors in Logs" : "No errors detected");
+    }
+    if (o.outcome == "unknown")
+        out += "\nOutcome unknown: " + o.reason;
+    else if (source.num(1))
+        out += "\nAnalysis incomplete: " + std::to_string(source.num(1)) + " oversized lines were truncated";
+    return out;
+}
 string explain(Database &db, long long id, bool human) {
     const auto o = outcome(db, id);
     Statement source(db.db, "SELECT name,lines,truncated_lines,exit_code,format FROM sources WHERE id=?");
@@ -1053,16 +1096,7 @@ string explain(Database &db, long long id, bool human) {
         answer = "The log does not establish a successful outcome. " + o.reason + ".";
     // Rank specific diagnostics ahead of generic failure markers. This selects
     // evidence for investigation; it does not prove a root cause.
-    Statement q(
-        db.db,
-        "SELECT id,severity,rule,message,first_line,last_line,count FROM issues WHERE source_id=? ORDER BY "
-        "CASE severity WHEN 'error' THEN 0 ELSE 1 END, CASE rule "
-        "WHEN 'dependency.missing' THEN 0 WHEN 'exception.cause' THEN 0 WHEN 'xcode.signing' THEN 0 WHEN 'make.target' "
-        "THEN 1 WHEN 'linker.error' THEN 1 WHEN 'compiler.error' THEN 2 WHEN 'compiler.kotlin' THEN 2 "
-        "WHEN 'crash.signal' THEN 3 WHEN 'crash.apple' THEN 3 WHEN 'android.crash' THEN 3 WHEN 'vscode.extension' THEN "
-        "1 WHEN 'cmake.error' THEN 3 WHEN 'gradle.failed' THEN 4 WHEN 'log.error' THEN 4 "
-        "WHEN 'test.failed' THEN 5 WHEN 'exception.unhandled' THEN 6 WHEN 'github.error' THEN 7 "
-        "WHEN 'build.failed' THEN 8 ELSE 9 END,first_line LIMIT 3");
+    Statement q(db.db, prioritized_issues_sql() + " LIMIT 3");
     q.bind(1, id);
     string items = "[", human_details, primary_rule;
     long long primary_line = 0;
@@ -1215,18 +1249,24 @@ string issues(Database &db, const Args &a, long long id) {
         q.bind(b++, a.severity);
     q.bind(b++, a.limit);
     q.bind(b, a.offset);
-    string out = "{\"schema_version\":1,\"source_id\":" + std::to_string(id) +
-                 ",\"total\":" + std::to_string(count.num(0)) + ",\"items\":[";
+    string out = a.output == "text" ? ""
+                                    : "{\"schema_version\":1,\"source_id\":" + std::to_string(id) +
+                                          ",\"total\":" + std::to_string(count.num(0)) + ",\"items\":[";
     long long returned = 0;
     while (q.step()) {
-        string item = issue_json(q);
+        string item = a.output == "text" ? q.str(1) + " at line " + std::to_string(q.num(4)) + ": " +
+                                               clip(q.str(3), 1500) + " (" + std::to_string(q.num(6)) + " occurrences)"
+                                         : issue_json(q);
         if (out.size() + item.size() + 256 > MAX_RESPONSE)
             break;
         if (returned++)
-            out += ',';
+            out += a.output == "text" ? '\n' : ',';
         out += item;
     }
     long long next = a.offset + returned;
+    if (a.output == "text")
+        return (out.empty() ? "No matching issues" : out) +
+               (next < count.num(0) ? "\nMore issues available; next offset: " + std::to_string(next) : "");
     return out + "],\"next_offset\":" + (next < count.num(0) ? std::to_string(next) : "null") + "}";
 }
 string lines(Database &db, const Args &a, long long id, bool search) {
@@ -1252,23 +1292,30 @@ string lines(Database &db, const Args &a, long long id, bool search) {
     }
     q.bind(b++, search ? a.limit + 1 : a.before + a.after + 2);
     q.bind(b, search ? a.offset : 0LL);
-    string out = "{\"schema_version\":1,\"source_id\":" + std::to_string(id) + ",\"items\":[";
+    string out = a.output == "text" ? "" : "{\"schema_version\":1,\"source_id\":" + std::to_string(id) + ",\"items\":[";
     long long returned = 0;
     bool more = false;
     long long last = 0;
     while (q.step()) {
         const auto text = q.str(1);
-        string item = "{\"line\":" + std::to_string(q.num(0)) + ",\"text\":" + json(clip(text, 2048)) +
-                      ",\"truncated\":" + (text.size() > 2048 ? "true" : "false") + "}";
+        string item = a.output == "text"
+                          ? "Line " + std::to_string(q.num(0)) + ": " + clip(text, 2048)
+                          : "{\"line\":" + std::to_string(q.num(0)) + ",\"text\":" + json(clip(text, 2048)) +
+                                ",\"truncated\":" + (text.size() > 2048 ? "true" : "false") + "}";
         if ((search && returned >= a.limit) || out.size() + item.size() + 256 > MAX_RESPONSE) {
             more = true;
             break;
         }
         if (returned++)
-            out += ',';
+            out += a.output == "text" ? '\n' : ',';
         out += item;
         last = q.num(0);
     }
+    if (a.output == "text")
+        return (out.empty() ? "No matching log lines" : out) +
+               (more ? "\nMore lines available; " + string(search ? "next offset: " : "next line: ") +
+                           std::to_string(search ? a.offset + returned : last + 1)
+                     : "");
     return out + "],\"has_more\":" + (more ? "true" : "false") +
            ",\"next_offset\":" + (search && more ? std::to_string(a.offset + returned) : "null") +
            ",\"next_line\":" + (!search && more ? std::to_string(last + 1) : "null") + "}";
@@ -1277,7 +1324,7 @@ string sources(Database &db, const Args &a) {
     Statement q(db.db, "SELECT id,name,format,lines,created FROM sources ORDER BY id DESC LIMIT ? OFFSET ?");
     q.bind(1, a.limit + 1);
     q.bind(2, a.offset);
-    string out = "{\"schema_version\":1,\"items\":[";
+    string out = a.output == "text" ? "" : "{\"schema_version\":1,\"items\":[";
     long long returned = 0;
     bool more = false;
     while (q.step()) {
@@ -1286,13 +1333,21 @@ string sources(Database &db, const Args &a) {
             break;
         }
         if (returned++)
-            out += ',';
+            out += a.output == "text" ? '\n' : ',';
         auto o = outcome(db, q.num(0));
+        if (a.output == "text") {
+            out += std::to_string(q.num(0)) + ": " + clip(q.str(1), 512) + " [" + o.status + ", " +
+                   std::to_string(q.num(3)) + " lines]";
+            continue;
+        }
         out += "{\"source_id\":" + std::to_string(q.num(0)) + ",\"name\":" + json(clip(q.str(1), 512)) +
                ",\"format\":" + json(q.str(2)) + ",\"lines\":" + std::to_string(q.num(3)) +
                ",\"created_at\":" + json(q.str(4)) + ",\"status\":" + json(o.status) +
                ",\"outcome\":" + json(o.outcome) + "}";
     }
+    if (a.output == "text")
+        return (out.empty() ? "No log sources" : out) +
+               (more ? "\nMore sources available; next offset: " + std::to_string(a.offset + returned) : "");
     return out + "],\"next_offset\":" + (more ? std::to_string(a.offset + returned) : "null") + "}";
 }
 int run_main(int argc, char **argv) {
@@ -1302,15 +1357,32 @@ int run_main(int argc, char **argv) {
 #else
     umask(0077);
 #endif
+    Args a;
+    if (const char *setting = std::getenv("LOGSONFIRE_OUTPUT"))
+        a.output = setting;
     try {
-        auto a = parse(argc, argv);
+        parse(a, argc, argv);
         if (a.command == "version") {
+            if (a.output == "text") {
+                std::cout << "logsonfire " LOGSONFIRE_VERSION "\n";
+                return 0;
+            }
             std::cout << "{\"version\":\"" LOGSONFIRE_VERSION "\",\"schema_version\":1}\n";
             return 0;
         }
         if (a.command == "help" || a.command == "schema") {
+            if (a.output == "text") {
+                std::cout << "LogsOnFire " LOGSONFIRE_VERSION "\nUsage: logsonfire [--output json|text] COMMAND\n"
+                             "Commands: analyze FILE|-, ingest FILE|-, summary, explain, check, sources, issues, "
+                             "context, search\n"
+                             "Use --source ID for saved evidence; --line N for context; --text TEXT for search.\n"
+                             "--human gives a detailed explanation for analyze/explain. --output text gives brief "
+                             "plain text.\n"
+                             "Settings: LOGSONFIRE_OUTPUT=json|text; LOGSONFIRE_DB=PATH.\n";
+                return 0;
+            }
             std::cout
-                << R"({"schema_version":1,"name":"logsonfire","commands":{"analyze":"FILE|- [--human] [--name NAME] [--format FORMAT] [--exit-code 0..4294967295]","explain":"[--source ID] [--human]","ingest":"FILE|- [--name NAME] [--format auto|generic|github|xcode|crash|python|build|logcat|android-studio|jetbrains|vscode|make|cmake|gradle] [--exit-code 0..4294967295] [--no-redact]","summary":"[--source ID]","check":"[--source ID]; exit 0=passed, 1=failed, 2=unknown/tool error","sources":"[--limit 1..100] [--offset N]","issues":"[--source ID] [--severity error|warning] [--limit 1..100] [--offset N]","context":"[--source ID] --line N [--before 0..49] [--after 0..49]","search":"[--source ID] --text TEXT [--fts] [--limit 1..100] [--offset N]"},"global":"--db PATH or LOGSONFIRE_DB; default .logsonfire/logs.db","defaults":"latest source; JSON by default; analyze/explain support --human; responses <=32768 bytes; summary <=5 issues","workflow":["ingest","summary","issues if needed","context at first_line"]})"
+                << R"({"schema_version":1,"name":"logsonfire","commands":{"analyze":"FILE|- [--human] [--name NAME] [--format FORMAT] [--exit-code 0..4294967295]","explain":"[--source ID] [--human]","ingest":"FILE|- [--name NAME] [--format auto|generic|github|xcode|crash|python|build|logcat|android-studio|jetbrains|vscode|make|cmake|gradle] [--exit-code 0..4294967295] [--no-redact]","summary":"[--source ID]","check":"[--source ID]; exit 0=passed, 1=failed, 2=unknown/tool error","sources":"[--limit 1..100] [--offset N]","issues":"[--source ID] [--severity error|warning] [--limit 1..100] [--offset N]","context":"[--source ID] --line N [--before 0..49] [--after 0..49]","search":"[--source ID] --text TEXT [--fts] [--limit 1..100] [--offset N]"},"global":"--db PATH or LOGSONFIRE_DB; --output json|text or LOGSONFIRE_OUTPUT; default JSON","defaults":"latest source; JSON by default; analyze/explain support --human; responses <=32768 bytes; summary <=5 issues","workflow":["ingest","summary","issues if needed","context at first_line"]})"
                 << '\n';
             return 0;
         }
@@ -1320,11 +1392,13 @@ int run_main(int argc, char **argv) {
             throw std::runtime_error("Unknown command: " + a.command);
         Database db(a.db);
         if (a.command == "ingest") {
-            std::cout << summary(db, ingest(db, a)) << '\n';
+            const auto id = ingest(db, a);
+            std::cout << (a.output == "text" ? brief_text(db, id) : summary(db, id)) << '\n';
             return 0;
         }
         if (a.command == "analyze") {
-            std::cout << explain(db, ingest(db, a), a.human) << '\n';
+            const auto id = ingest(db, a);
+            std::cout << (a.output == "text" && !a.human ? brief_text(db, id) : explain(db, id, a.human)) << '\n';
             return 0;
         }
         if (a.command == "sources") {
@@ -1333,19 +1407,23 @@ int run_main(int argc, char **argv) {
         }
         auto id = source_id(db, a.source);
         if (a.command == "summary" || a.command == "check") {
-            std::cout << summary(db, id) << '\n';
+            std::cout << (a.output == "text" ? brief_text(db, id) : summary(db, id)) << '\n';
             if (a.command == "check") {
                 auto o = outcome(db, id);
                 return o.outcome == "passed" ? 0 : (o.outcome == "failed" ? 1 : 2);
             }
         } else if (a.command == "explain")
-            std::cout << explain(db, id, a.human) << '\n';
+            std::cout << (a.output == "text" && !a.human ? brief_text(db, id) : explain(db, id, a.human)) << '\n';
         else if (a.command == "issues")
             std::cout << issues(db, a, id) << '\n';
         else
             std::cout << lines(db, a, id, a.command == "search") << '\n';
         return 0;
     } catch (const std::exception &e) {
+        if (a.output == "text") {
+            std::cout << "LogsOnFire error: " << utf8(clip(e.what(), 1000)) << '\n';
+            return 2;
+        }
         std::cout << "{\"schema_version\":1,\"error\":{\"code\":\"tool_error\",\"message\":"
                   << json(utf8(clip(e.what(), 1000))) << "}}\n";
         return 2;

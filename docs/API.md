@@ -70,9 +70,14 @@ context, each line is clipped at 300 bytes with a truncation flag.
 Android crashes and Java nested causes also populate `crash_context` from nearby
 exception-chain lines. Logcat stack context excludes different PIDs.
 
-`analyze --human` and `explain --human` opt into readable terminal output. Other
-native operations remain JSON-only. Both analysis commands return 0 when the
-operation succeeds, including when the log reports a failed build.
+JSON remains the default. `--output text` selects concise plain text for native
+commands and capture reports; `LOGSONFIRE_OUTPUT=text` sets that CLI preference.
+Use `--output json` to override it. `analyze --human` and `explain --human` retain
+the longer terminal explanation. Unknown/incomplete analysis is disclosed in
+plain text, and `check` exit codes are unchanged. Python JSON clients explicitly
+request JSON; `Client.text(source)` returns a concise string. HTTP remains JSON.
+Both analysis commands return 0 when the operation succeeds, including when the
+log reports a failed build.
 
 ## Bounds and pagination
 

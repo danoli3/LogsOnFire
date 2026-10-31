@@ -94,3 +94,24 @@ entire log into its context.
   Identify the counter: default byte-based token estimates or an explicitly
   selected reference tokenizer. Never describe these figures as measured Codex
   billing, total conversation savings, or exact savings for an unknown tokenizer.
+
+## Versioning and changelog
+
+- Follow SemVer. `VERSION` is the single source for native, Python, package, and
+  release versions. Do not add duplicated hard-coded version strings.
+- Increment PATCH for compatible fixes; MINOR for new features. While pre-1.0,
+  put compatibility breaks in a new minor version and label them explicitly.
+  After 1.0, incompatible public API changes require a major bump.
+- Use ordered pre-release suffixes such as `0.2.0-rc.1`, `0.2.0-rc.2`, then
+  `0.2.0`. Tags use the exact `v`-prefixed value. Never move or overwrite a tag
+  or alter already-published release artifacts.
+- Keep `changelog.md` current for each user-visible change, grouped under Added,
+  Changed, Fixed, Removed, Deprecated, or Security as appropriate. Keep an
+  Unreleased section and a section matching VERSION. Do not invent publication.
+- Run `python3 tools/version.py --check`; release tags must also pass
+  `python3 tools/version.py --check --expected TAG`.
+- Preserve the default JSON CLI/API contract. Plain text is an explicit human
+  preference; internal clients must request JSON independently of that preference.
+- Ship the test/log bundle with releases and replay that same bundle in CI.
+  README remains a usage guide; setup belongs in BUILDING.md, and installed-package
+  instructions must distinguish local DEB installation from an actual APT repository.

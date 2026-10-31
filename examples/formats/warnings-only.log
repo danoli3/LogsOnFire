@@ -1,0 +1,3 @@
+src/example.cpp:12: warning: unused variable
+src/example.cpp:18: warning: deprecated declaration
+** BUILD SUCCEEDED **

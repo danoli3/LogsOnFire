@@ -8,7 +8,10 @@ on:
 permissions:
   contents: read
 jobs:
+  unit_tests:
+    uses: ./.github/workflows/unit-tests.yml
   native:
+    needs: unit_tests
     strategy:
       fail-fast: false
       matrix:
@@ -39,6 +42,10 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
+      - uses: actions/download-artifact@v6
+        with:
+          name: logsonfire-test-bundle
+          path: fixture-archive
       - name: Linux dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev rpm
@@ -59,7 +66,16 @@ jobs:
       - name: Compile
         run: cmake --build build --config Release --parallel
       - name: Tests
-        run: ctest --test-dir build -C Release --output-on-failure
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          version=$(python tools/version.py --check)
+          mkdir -p fixture-replay
+          tar -xzf "fixture-archive/logsonfire-$version-tests.tar.gz" -C fixture-replay
+          binary="$PWD/build/logsonfire"
+          if [[ "$PLATFORM" == windows ]]; then binary="$PWD/build/Release/logsonfire.exe"; fi
+          python "fixture-replay/logsonfire-tests-$version/run-tests.py" --binary "$binary"
       - name: Install and smoke test package layout
         shell: bash
         run: |
@@ -71,7 +87,7 @@ jobs:
           PLATFORM: ${{ matrix.platform }}
           ARCH: ${{ matrix.arch }}
         run: |
-          version=$(python -c 'import re; print(re.search(r"project\(LogsOnFire VERSION ([0-9.]+)", open("CMakeLists.txt").read())[1])')
+          version=$(python tools/version.py --check)
           mkdir -p dist
           if [[ "$PLATFORM" == windows ]]; then
             generator=ZIP
@@ -92,3 +108,25 @@ jobs:
             dist/*.deb
             dist/*.rpm
           if-no-files-found: error
+  homebrew:
+    needs: unit_tests
+    runs-on: macos-15
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Build and test Homebrew formula from this source
+        run: |
+          version=$(python tools/version.py --check)
+          mkdir -p dist
+          git archive --format=tar.gz --prefix="logsonfire-$version/" -o "dist/logsonfire-$version-source.tar.gz" HEAD
+          python tools/release_manifests.py --repository "$GITHUB_REPOSITORY" --version "$version" --artifacts dist --output dist/manifests --homebrew-only --source-url "file://$PWD/dist/logsonfire-$version-source.tar.gz"
+          brew tap-new --no-git local/logsonfire-ci
+          cp dist/manifests/homebrew/logsonfire.rb "$(brew --repository local/logsonfire-ci)/Formula/logsonfire.rb"
+          brew install --build-from-source local/logsonfire-ci/logsonfire
+          brew test local/logsonfire-ci/logsonfire
+          logsonfire --output text --version

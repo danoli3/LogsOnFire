@@ -91,6 +91,14 @@ class FormatTests(unittest.TestCase):
         self.assertEqual(report["errors"],0)
         self.assertEqual(report["outcome"],"unknown")
 
+    def test_released_success_warning_and_crash_samples(self):
+        for name,outcome in (("clean-build.log","passed"),("xcode-success.log","passed"),
+                             ("warnings-only.log","passed"),("android-logcat-info.log","unknown"),
+                             ("cmake-optional.log","unknown"),("pytest-failed.log","failed"),
+                             ("asan-crash.log","failed")):
+            with self.subTest(name=name):
+                self.assertEqual(self.sample(name)["outcome"],outcome)
+
 
 if __name__ == "__main__":
     unittest.main()

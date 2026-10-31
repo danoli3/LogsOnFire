@@ -1,0 +1,6 @@
+==1234==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x00001234
+READ of size 4 at 0x00001234 thread T0
+Stack trace:
+    #0 0x00001000 in parse_record example.cpp:42
+    #1 0x00002000 in main example.cpp:80
+SUMMARY: AddressSanitizer: heap-buffer-overflow example.cpp:42 in parse_record

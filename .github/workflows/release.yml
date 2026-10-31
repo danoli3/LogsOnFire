@@ -1,4 +1,4 @@
-name: Prepare release
+name: Release packages
 on:
   push:
     tags: ['v[0-9]*']
@@ -7,7 +7,7 @@ permissions:
 jobs:
   build:
     uses: ./.github/workflows/build.yml
-  draft:
+  publish:
     needs: build
     runs-on: ubuntu-24.04
     permissions:
@@ -30,13 +30,31 @@ jobs:
           PUBLISHER: ${{ github.repository_owner }}
         run: |
           version="${TAG#v}"
-          python -c 'import re,sys; assert sys.argv[1] == re.search(r"project\(LogsOnFire VERSION ([0-9.]+)", open("CMakeLists.txt").read())[1], "Tag differs from CMake version"' "$version"
+          python tools/version.py --check --expected "$TAG"
           git archive --format=tar.gz --prefix="logsonfire-$version/" -o "dist/logsonfire-$version-source.tar.gz" HEAD
           python tools/release_manifests.py --repository "$REPOSITORY" --version "$version" --artifacts dist --output dist/manifests --package-id "$PACKAGE_ID" --publisher "$PUBLISHER"
           cp dist/manifests/SHA256SUMS dist/SHA256SUMS
+          cp dist/manifests/homebrew/logsonfire.rb dist/logsonfire.rb
           tar -czf "dist/logsonfire-$version-manifests.tar.gz" -C dist/manifests homebrew winget
-      - name: Create draft release
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0,'tools')
+          from release_manifests import sha256
+          root=Path('dist')
+          files=sorted(p for p in root.iterdir() if p.is_file() and p.name!='SHA256SUMS')
+          (root/'SHA256SUMS').write_text(''.join(f'{sha256(p)}  {p.name}\n' for p in files))
+          PY
+      - name: Publish release or pre-release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm dist/SHA256SUMS --verify-tag --draft --title "LogsOnFire $TAG" --notes-file docs/RELEASE_NOTES.md
+        run: |
+          flags=()
+          if [[ "${TAG#v}" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$TAG" dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm dist/logsonfire.rb dist/SHA256SUMS --verify-tag "${flags[@]}" --title "LogsOnFire $TAG" --notes-file docs/RELEASE_NOTES.md
+      - name: Publish Homebrew tap formula in this repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: python tools/publish_homebrew.py --repository "$GITHUB_REPOSITORY" --version "${TAG#v}" --formula dist/logsonfire.rb

@@ -1,7 +1,7 @@
 # Distribution and release preparation
 
-The repository contains packaging automation; it has not been published to
-Homebrew or WinGet. The release repository is
+The repository builds native packages, a Homebrew tap formula, and the test/log
+archive. WinGet community submission is separate. The release repository is
 [danoli3/LogsOnFire](https://github.com/danoli3/LogsOnFire).
 
 ## Build targets
@@ -45,14 +45,15 @@ to install `.deb` or `.rpm` files with dependencies.
 1. Put the project in its intended GitHub repository. Set its `WINGET_PACKAGE_ID`
    Actions variable if the identifier should differ from `LogsOnFire.LogsOnFire`.
    Select an identifier appropriate for the actual publisher.
-2. Update the version in `CMakeLists.txt`, update release notes, and commit all
+2. Update `VERSION`, `changelog.md`, and release notes, and commit all
    intended release files. Run tests.
-3. Push a matching `vMAJOR.MINOR.PATCH` tag. The release workflow verifies the tag
-   against CMake, builds all six variants, and creates a **draft GitHub release**.
-4. Review the draft's archives, checksums, source archive, and generated manifests.
-   Publish the draft when ready. The workflow does not submit to package registries.
-5. Commit the generated Homebrew formula to your tap and submit the generated
-   WinGet manifests to Microsoft's community repository separately.
+3. Run `python3 tools/version.py --check`. Push a matching `vMAJOR.MINOR.PATCH`
+   tag, optionally with a SemVer pre-release suffix such as `v0.2.0-rc.1`.
+4. The workflow verifies the tag, builds/tests all six variants and Homebrew,
+   replays the fixture archive, and publishes the assets. Suffixed versions are
+   marked as GitHub pre-releases. Published tags/assets must remain immutable.
+5. The generated formula is committed into this repository's `Formula` directory
+   for the custom tap. WinGet community submission remains separate.
 
 Release manifests are generated from actual artifact bytes, with real SHA-256
 checksums and URLs derived from the chosen repository and tag. To generate locally:
@@ -60,28 +61,31 @@ checksums and URLs derived from the chosen repository and tag. To generate local
 ```sh
 python3 tools/release_manifests.py \
   --repository YOUR_OWNER/YOUR_REPO \
-  --version 0.1.0 \
+  --version 0.2.0-rc.1 \
   --artifacts dist \
   --output dist/manifests \
   --package-id YourPublisher.LogsOnFire \
   --publisher 'Your Publisher'
 ```
 
-The generator requires `logsonfire-0.1.0-source.tar.gz` and both Windows ZIPs,
+The generator requires `logsonfire-0.2.0-rc.1-source.tar.gz` and both Windows ZIPs,
 with `bin/logsonfire.exe` in each. The workflow creates the source archive with
 `git archive`; it includes only committed files. `SHA256SUMS` covers release
-packages and source, excluding the manifests archive generated afterward.
+packages and source. The release workflow also hashes the final manifests archive
+and standalone formula. Debian pre-release package versions use `~rc.1`, while
+RPM uses a `0.rc.1` release value so candidates sort before stable packages.
 
 ## Homebrew
 
 The generated `homebrew/logsonfire.rb` builds from the release source archive using
-CMake and depends on SQLite and Python. Commit it as `Formula/logsonfire.rb` in
-your `homebrew-TAP` repository. Once published, users install with:
+CMake and depends on SQLite and Python. CI tests it against a local source archive
+before publication. The release workflow writes `Formula/logsonfire.rb` on main.
+Users install the project's custom tap with:
 
 ```sh
-brew tap YOUR_OWNER/YOUR_TAP
-brew install logsonfire
-brew test logsonfire
+brew tap danoli3/logsonfire https://github.com/danoli3/LogsOnFire.git
+brew install danoli3/logsonfire/logsonfire
+brew test danoli3/logsonfire/logsonfire
 ```
 
 Validate with `brew style`, `brew audit`, installation, and `brew test` before

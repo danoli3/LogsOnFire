@@ -13,6 +13,7 @@ import sys
 import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
+from logsonfire_version import VERSION as __version__
 
 SCHEMA_VERSION = 1
 MAX_RESPONSE_BYTES = 32768
@@ -45,8 +46,10 @@ class Client:
         self.db = str(db or os.environ.get("LOGSONFIRE_DB", ".logsonfire/logs.db"))
 
     def query(self, command="summary", **options):
-        args = [self.binary, "--db", self.db, command]
+        args = [self.binary, "--db", self.db, "--output", "json", command]
         for name, value in options.items():
+            if name == "output" and value != "json":
+                raise LogError("Use Client.text() for plain-text output")
             if value is None or value is False:
                 continue
             args.append("--" + name.replace("_", "-"))
@@ -64,7 +67,7 @@ class Client:
         return payload
 
     def _read_file(self, command, path, *, name=None, exit_code=None, format="auto"):
-        args = [self.binary, "--db", self.db, command, str(path), "--format", format]
+        args = [self.binary, "--db", self.db, "--output", "json", command, str(path), "--format", format]
         if name is not None:
             args += ["--name", name]
         if exit_code is not None:
@@ -91,6 +94,17 @@ class Client:
     def summary(self, source=None):
         return self.query("summary", source=source)
 
+    def text(self, source=None):
+        """Return a concise plain-text summary for people."""
+        args = [self.binary,"--db",self.db,"--output","text","summary"]
+        if source is not None:
+            args += ["--source",str(source)]
+        result = subprocess.run(args,capture_output=True,timeout=60)
+        text = result.stdout.decode("utf-8")
+        if result.returncode:
+            raise LogError(text.strip().removeprefix("LogsOnFire error: "))
+        return text
+
     def issues(self, source=None, **options):
         return self.query("issues", source=source, **options)
 
@@ -112,7 +126,7 @@ class Client:
             raise LogError("run requires a command after --")
         with tempfile.TemporaryDirectory(prefix="logsonfire-") as directory:
             exit_file = Path(directory) / "exit-code"
-            ingest_args = [self.binary, "--db", self.db, "ingest", "-", "--name",
+            ingest_args = [self.binary, "--db", self.db, "--output", "json", "ingest", "-", "--name",
                            name or Path(command[0]).name, "--exit-code-file", str(exit_file)]
             parser = subprocess.Popen(ingest_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             child = None
@@ -178,7 +192,7 @@ API_SCHEMA = {
 
 def make_handler(client):
     class Handler(BaseHTTPRequestHandler):
-        server_version = "LogsOnFire/0.1"
+        server_version = "LogsOnFire/" + __version__
 
         def log_message(self, fmt, *args):
             # Avoid logging query text that could contain credentials.
@@ -269,25 +283,35 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db")
     parser.add_argument("--binary")
+    parser.add_argument("--output",choices=("json","text"),default=os.environ.get("LOGSONFIRE_OUTPUT","json"))
     sub = parser.add_subparsers(dest="command", required=True)
     server = sub.add_parser("serve", help="Start the read-only HTTP API on 127.0.0.1")
     server.add_argument("--port", type=int, default=8765)
     run = sub.add_parser("run", help="Capture a process; live output goes to stderr, JSON to stdout")
     run.add_argument("--name")
     run.add_argument("--quiet", action="store_true", help="Suppress live output (which can include secrets)")
+    run.add_argument("--output",choices=("json","text"),default=argparse.SUPPRESS)
     run.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
+        if args.output not in ("json","text"):
+            raise LogError("LOGSONFIRE_OUTPUT must be json or text")
         client = Client(args.db, args.binary)
         if args.command == "serve":
             serve(client, args.port)
             return 0
         command = args.args[1:] if args.args[:1] == ["--"] else args.args
         code, payload = client.capture(command, name=args.name, quiet=args.quiet)
-        print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        if args.output=="text":
+            sys.stdout.buffer.write(client.text(payload["source_id"]).encode("utf-8"))
+        else:
+            print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
         return code
     except (LogError, OSError, ValueError, subprocess.TimeoutExpired) as exc:
-        print(json.dumps({"schema_version": 1, "error": {"code": "tool_error", "message": str(exc)}}))
+        if args.output=="text":
+            sys.stdout.buffer.write(("LogsOnFire error: "+str(exc)+"\n").encode("utf-8"))
+        else:
+            print(json.dumps({"schema_version": 1, "error": {"code": "tool_error", "message": str(exc)}}))
         return 2
     except KeyboardInterrupt:
         return 130
