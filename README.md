@@ -21,9 +21,9 @@ missing header, its source line, and a check to install the SQLite development
 package. [Try the included GitHub Actions log](examples/github-actions-failed.log)
 or see the [full example and agent workflow](examples/README.md).
 
-The same CLI can return compact JSON for an AI agent with `logsonfire analyze
-build.log`; use `logsonfire-agent run --quiet -- COMMAND ...` to capture a command
-and analyze its output without loading the raw log into the agent's context.
+The same CLI returns compact JSON for an AI agent: `logsonfire analyze build.log`.
+Use `logsonfire-agent run --quiet -- COMMAND ...` to capture a command and analyze
+its output without loading the raw log into the agent's context.
 
 **Build and installation:** [BUILDING.md](BUILDING.md).
 
