@@ -574,7 +574,7 @@ struct Args {
     string command, db, file, name, format = "auto", text, exit_file, output = "json";
     long long source = 0, limit = 10, offset = 0, line = 1, before = 3, after = 3;
     std::optional<long long> exit_code;
-    bool redact = true, fts = false, human = false;
+    bool redact = true, fts = false, human = false, output_explicit = false;
     string severity;
 };
 long long integer(const string &s, long long min, long long max) {
@@ -612,8 +612,10 @@ void parse(Args &a, int argc, char **argv) {
             a.name = value();
         else if (s == "--format")
             a.format = value();
-        else if (s == "--output")
+        else if (s == "--output") {
             a.output = value();
+            a.output_explicit = true;
+        }
         else if (s == "--text")
             a.text = value();
         else if (s == "--severity")
@@ -642,6 +644,10 @@ void parse(Args &a, int argc, char **argv) {
     }
     if (a.command.empty())
         a.command = "help";
+    // Help is JSON for agents even when a human CLI preference is set. People
+    // can request the complete prose version explicitly with --output text.
+    if (a.command == "help" && !a.output_explicit)
+        a.output = "json";
     if (a.format != "auto" && a.format != "generic" && a.format != "github" && a.format != "xcode" &&
         a.format != "crash" && a.format != "python" && a.format != "build" && a.format != "logcat" &&
         a.format != "android-studio" && a.format != "jetbrains" && a.format != "vscode" && a.format != "cmake" &&
@@ -655,6 +661,13 @@ void parse(Args &a, int argc, char **argv) {
         throw std::runtime_error("--human is available for analyze and explain");
     if (a.output != "json" && a.output != "text")
         throw std::runtime_error("Output must be json or text");
+}
+string full_help_json() {
+    string result = string(R"json({"schema_version":1,"name":"logsonfire","version":)json") +
+           json(LOGSONFIRE_VERSION) + R"json(,"description":"Local-first log analysis. Ingest text once, inspect compact findings, and query only relevant evidence.","usage":"logsonfire [GLOBAL_OPTIONS] COMMAND [OPTIONS]","commands":{"analyze":{"usage":"analyze FILE|- [--name NAME] [--format FORMAT] [--exit-code CODE] [--human]","description":"Ingest a log and explain the most useful evidence. Use - for stdin."},"ingest":{"usage":"ingest FILE|- [--name NAME] [--format FORMAT] [--exit-code CODE] [--no-redact]","description":"Ingest a log and return its compact summary."},"summary":{"usage":"summary [--source ID]","description":"Return status, counts, and up to five prioritized issues."},"explain":{"usage":"explain [--source ID] [--human]","description":"Explain the latest or selected saved source."},"check":{"usage":"check [--source ID]","description":"Return summary and exit 0=passed, 1=failed, 2=unknown or tool error."},"sources":{"usage":"sources [--limit 1..100] [--offset N]","description":"List saved log sources."},"issues":{"usage":"issues [--source ID] [--severity error|warning] [--limit 1..100] [--offset N]","description":"List grouped diagnostics with original line references."},"context":{"usage":"context [--source ID] --line N [--before 0..49] [--after 0..49]","description":"Read a bounded window of saved log lines."},"search":{"usage":"search [--source ID] --text TEXT [--fts] [--limit 1..100] [--offset N]","description":"Search saved log text; searches are literal unless --fts is selected."},"schema":{"usage":"schema","description":"Return the compact native CLI/API schema."},"--help|-h":{"usage":"logsonfire --help [--output json|text]","description":"Return this full CLI/API reference. JSON is the default for agent discovery."},"--version":{"usage":"logsonfire --version","description":"Print the installed version."}},"global_options":{"--db PATH":"Select the SQLite database; default .logsonfire/logs.db or LOGSONFIRE_DB.","--output json|text":"Choose machine-readable JSON (default) or concise human text; LOGSONFIRE_OUTPUT sets the CLI preference.","--source ID":"Select a saved source for query commands; omission selects the newest source.","--format FORMAT":"Hint the input format; auto-detection is the default.","--name NAME":"Set the saved source name.","--exit-code CODE":"Attach the producer's actual exit code (0..4294967295). Do not guess it.","--human":"Show a longer explanation for analyze or explain.","--no-redact":"Disable heuristic credential redaction for ingest (use only when appropriate)."},"formats":["auto","generic","github","xcode","crash","python","build","logcat","android-studio","jetbrains","vscode","cmake","make","gradle"],"outputs":{"json":"Structured data for agents; includes source_id, outcome, status, reason, counts, top_issues, and next query hints.","text":"Concise human report selected with --output text; Python/HTTP integrations remain JSON."},"outcomes":{"passed":"Recognized completion evidence and no detected errors; does not prove overall correctness.","failed":"Detected error evidence or a known nonzero producer exit.","unknown":"Insufficient completion evidence or incomplete analysis."},"agent_commands":{"capture":"logsonfire-agent run --quiet --output json -- COMMAND ARGUMENTS","github_actions":"logsonfire-agent github [--output json|text] ACTIONS_URL; requires gh on PATH and its repository access. Run/job URLs fetch that target. An /actions page selects the most recent failed run among the latest 20, or the most recent run if none failed.","serve":"logsonfire-agent serve --port 8765; starts a read-only API bound to 127.0.0.1"},"github_actions":{"run_url":"https://github.com/OWNER/REPO/actions/runs/RUN_ID","job_url":"https://github.com/OWNER/REPO/actions/runs/RUN_ID/job/JOB_ID","requires":"GitHub CLI gh installed and authenticated with access to the repository","behavior":"Only https://github.com Actions URLs are accepted. Logs are downloaded to a temporary file, analyzed locally, and the temporary file is removed. No arbitrary shell command or URL fetch is performed."},"http_api":{"schema":"GET /v1/schema","health":"GET /v1/health","summary":"GET /v1/summary?source=ID","explain":"GET /v1/explain?source=ID","sources":"GET /v1/sources?limit=10&offset=0","issues":"GET /v1/issues?source=ID&severity=error&limit=10","context":"GET /v1/context?source=ID&line=N&before=3&after=3","search":"GET /v1/search?source=ID&text=TEXT","limitations":"Read-only, JSON, localhost by default. It does not ingest files or fetch URLs."},"workflow":["Run analyze FILE to ingest and assess a log.","Use returned source_id to request issues, context, or search only when needed.","Preserve unknown outcomes and distinguish observed evidence from suggested checks."],"examples":["logsonfire --output json analyze build.log","logsonfire analyze - --format github < actions.log","logsonfire issues --source 1 --severity error","logsonfire context --source 1 --line 42 --before 3 --after 5","logsonfire-agent github https://github.com/OWNER/REPO/actions/runs/RUN_ID"]})json";
+    const auto close = result.rfind('}');
+    result.insert(close, R"json(,"api_response_contract":{"analysis_fields":["schema_version","source_id","name","format","created_at","status","outcome","reason","exit_code","lines","input_bytes","truncated_lines","redacted_lines","redaction_enabled","errors","warnings","issue_groups","answer","analysis","findings","context","suggested_checks","next"],"issue_fields":["id","severity","rule","message","message_truncated","first_line","last_line","count"],"context_fields":["line","text","truncated"],"list_fields":["schema_version","source_id","items","total","has_more","next_offset","next_line"],"error_shape":{"schema_version":1,"error":{"code":"tool_error","message":"Human-readable error"}},"limits":{"max_response_bytes":32768,"max_summary_issues":5,"max_list_limit":100,"ingest_line_bytes":65536},"exit_codes":{"analysis_or_query_success":0,"tool_error":2,"check":{"passed":0,"failed":1,"unknown":2},"capture":"Returns the producer's exit status."}})json");
+    return result;
 }
 long long source_id(Database &db, long long id) {
     Statement q(db.db, id ? "SELECT id FROM sources WHERE id=?" : "SELECT id FROM sources ORDER BY id DESC LIMIT 1");
@@ -1370,15 +1383,41 @@ int run_main(int argc, char **argv) {
             std::cout << "{\"version\":\"" LOGSONFIRE_VERSION "\",\"schema_version\":1}\n";
             return 0;
         }
-        if (a.command == "help" || a.command == "schema") {
+        if (a.command == "help") {
             if (a.output == "text") {
-                std::cout << "LogsOnFire " LOGSONFIRE_VERSION "\nUsage: logsonfire [--output json|text] COMMAND\n"
-                             "Commands: analyze FILE|-, ingest FILE|-, summary, explain, check, sources, issues, "
-                             "context, search\n"
-                             "Use --source ID for saved evidence; --line N for context; --text TEXT for search.\n"
-                             "--human gives a detailed explanation for analyze/explain. --output text gives brief "
-                             "plain text.\n"
-                             "Settings: LOGSONFIRE_OUTPUT=json|text; LOGSONFIRE_DB=PATH.\n";
+                std::cout << "LogsOnFire " LOGSONFIRE_VERSION
+                             "\nUsage: logsonfire [GLOBAL_OPTIONS] COMMAND [OPTIONS]\n\n"
+                             "Analysis: analyze FILE|- [--name NAME] [--format FORMAT] [--exit-code CODE] [--human]\n"
+                             "           ingest FILE|- [--name NAME] [--format FORMAT] [--exit-code CODE] [--no-redact]\n"
+                             "Queries:   summary|explain|check [--source ID]\n"
+                             "           sources|issues [--source ID] [--limit 1..100] [--offset N]\n"
+                             "           context --source ID --line N [--before 0..49] [--after 0..49]\n"
+                             "           search --source ID --text TEXT [--fts] [--limit 1..100] [--offset N]\n"
+                             "           schema (compact API schema)\n\n"
+                             "Global options: --db PATH, --source ID, --output json|text.\n"
+                             "Formats: auto, generic, github, xcode, crash, python, build, logcat, android-studio,\n"
+                             "         jetbrains, vscode, cmake, make, gradle.\n"
+                             "JSON is the default and is returned by --help for agent discovery. Use --output text\n"
+                             "for concise human reports; --human gives longer analyze/explain detail.\n"
+                             "Settings: LOGSONFIRE_DB=PATH; LOGSONFIRE_OUTPUT=json|text.\n\n"
+                             "Agent integrations (Python endpoint):\n"
+                             "  logsonfire-agent run --quiet --output json -- COMMAND ARGUMENTS\n"
+                             "  logsonfire-agent github [--output json|text] ACTIONS_URL\n"
+                             "    Fetches an Actions run/job with gh. An /actions page selects the most recent failed\n"
+                             "    run from the latest 20, or the newest run if none failed. Requires authenticated gh.\n"
+                             "  logsonfire-agent serve --port 8765 (read-only API on localhost)\n\n"
+                             "Outcomes: passed (completion evidence, no detected errors), failed (error evidence or\n"
+                             "known nonzero exit), unknown (incomplete evidence). No detected errors alone do not\n"
+                             "prove success. Use returned source_id for targeted issues/context/search queries.\n"
+                             "Use `logsonfire --help --output json` for the complete machine-readable reference.\n";
+                return 0;
+            }
+            std::cout << full_help_json() << '\n';
+            return 0;
+        }
+        if (a.command == "schema") {
+            if (a.output == "text") {
+                std::cout << "Use `logsonfire --help --output json` for the complete CLI reference.\n";
                 return 0;
             }
             std::cout

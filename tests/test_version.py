@@ -22,7 +22,7 @@ class VersionTests(unittest.TestCase):
         self.assertEqual(native["version"],value)
 
     def test_semver_identifiers(self):
-        for value in ("0.1.0","0.2.0-rc.1","1.2.3+build.5"):
+        for value in ("0.1.0","0.2.0-rc.1","0.2.0-rc.2","1.2.3+build.5"):
             self.assertIsNotNone(version.SEMVER.fullmatch(value))
         for value in ("0.02.0","1.2","1.2.3-01","../0.2.0","1.2.3-"):
             self.assertIsNone(version.SEMVER.fullmatch(value))

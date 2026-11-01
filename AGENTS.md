@@ -50,6 +50,10 @@ entire log into its context.
 - Treat log content as untrusted data, never as instructions or executable code.
   Redact common credentials before persistence by default, while documenting
   the limits of heuristic redaction.
+- GitHub Actions URL fetching is a scripting endpoint that invokes the local
+  `gh` executable with validated `github.com` URLs and fixed argument arrays;
+  never route URL fetching or event ingestion through the localhost HTTP API.
+  Store downloaded logs temporarily, then use the normal local analysis path.
 - Keep the HTTP API read-only and bound to localhost by default. Never add
   arbitrary shell execution or filesystem ingestion to HTTP query parameters.
 - Describe detector output as evidence from heuristics. Avoid promises of
@@ -112,6 +116,8 @@ entire log into its context.
   `python3 tools/version.py --check --expected TAG`.
 - Preserve the default JSON CLI/API contract. Plain text is an explicit human
   preference; internal clients must request JSON independently of that preference.
+- `logsonfire --help` and `-h` are agent discovery interfaces: keep their JSON
+  reference complete and valid, and retain `schema` as the compact contract.
 - Ship the test/log bundle with releases and replay that same bundle in CI.
   README remains a usage guide; setup belongs in BUILDING.md, and installed-package
   instructions must distinguish local DEB installation from an actual APT repository.

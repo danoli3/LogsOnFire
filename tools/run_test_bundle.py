@@ -24,7 +24,7 @@ def main():
         actual=hashlib.sha256(path.read_bytes()).hexdigest()
         if actual!=expected:
             raise ValueError("Fixture/test checksum mismatch: "+name)
-    suites=("test_system.py","test_packaging.py","test_savings.py","test_formats.py","test_output.py","test_version.py")
+    suites=("test_system.py","test_packaging.py","test_savings.py","test_formats.py","test_output.py","test_version.py","test_github.py")
     for suite in suites:
         command=[sys.executable,str(root/"tests"/suite)]
         if suite!="test_packaging.py": command.append(str(binary))

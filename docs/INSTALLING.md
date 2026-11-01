@@ -1,6 +1,6 @@
 # Install and use the 0.2.0 release candidate
 
-The first release candidate is `v0.2.0-rc.1`. Pre-releases are available from the
+The current release candidate is `v0.2.0-rc.2`. Pre-releases are available from the
 repository's [releases page](https://github.com/danoli3/LogsOnFire/releases), with
 explicit versioned download URLs. Stable `0.2.0` is a later release.
 
@@ -33,8 +33,8 @@ a project tap, not a claim of inclusion in Homebrew core.
 Choose `x64` for an amd64 machine or `arm64` for an ARM64 machine:
 
 ```sh
-curl -fLO https://github.com/danoli3/LogsOnFire/releases/download/v0.2.0-rc.1/logsonfire-0.2.0-rc.1-linux-x64.deb
-sudo apt-get install ./logsonfire-0.2.0-rc.1-linux-x64.deb
+curl -fLO https://github.com/danoli3/LogsOnFire/releases/download/v0.2.0-rc.2/logsonfire-0.2.0-rc.2-linux-x64.deb
+sudo apt-get install ./logsonfire-0.2.0-rc.2-linux-x64.deb
 logsonfire --output text --version
 logsonfire analyze build.log --output text
 ```

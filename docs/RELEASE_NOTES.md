@@ -6,6 +6,9 @@ LogsOnFire 0.2.0 release candidate:
   read-only HTTP API.
 - Plain-text CLI/capture mode with `--output text` or `LOGSONFIRE_OUTPUT=text`,
   concise error/warning summaries, and explicit unknown/incomplete outcomes.
+- Full machine-readable CLI/API documentation from `logsonfire --help` and `-h`.
+- Direct GitHub Actions page/run/job link analysis through the local `gh` CLI,
+  with bounded run selection for repository Actions pages.
 - A single semantic version source, maintained changelog, install guides, and a
   copyable AI-agent prompt.
 - CMake installation, cross-platform build matrix, Linux packages, and generated

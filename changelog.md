@@ -12,6 +12,16 @@ is established by its GitHub tag/release, not by this file alone.
 - Clarified the README's first-use path and added a repository social preview
   image plus GitHub discovery metadata.
 
+## [0.2.0-rc.2] - 2026-11-02
+
+### Added
+
+- Full machine-readable CLI/API documentation from `logsonfire --help` and `-h`.
+- `logsonfire-agent github URL` to fetch GitHub Actions run/job logs with `gh`,
+  including latest-failed-run selection from a repository Actions page.
+- GitHub fetching uses validated HTTPS Actions links and argument-based `gh`
+  invocation; downloaded logs are temporary and analyzed by the local engine.
+
 ## [0.2.0-rc.1] - 2026-10-31
 
 ### Added

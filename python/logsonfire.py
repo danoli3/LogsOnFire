@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -23,6 +24,99 @@ class LogError(RuntimeError):
     def __init__(self, message, payload=None):
         super().__init__(message)
         self.payload = payload
+
+
+def parse_github_actions_url(url):
+    """Accept only GitHub Actions listing, run, and job URLs."""
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except (TypeError, ValueError) as exc:
+        raise LogError("Invalid GitHub Actions URL") from exc
+    if parsed.scheme != "https" or parsed.hostname != "github.com" or parsed.username or parsed.password or port:
+        raise LogError("Expected an https://github.com Actions URL")
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 3 or parts[2] != "actions":
+        raise LogError("URL must point to a GitHub repository Actions page, run, or job")
+    owner, repository = parts[:2]
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", owner) or not re.fullmatch(r"[A-Za-z0-9_.-]+", repository):
+        raise LogError("Invalid GitHub owner or repository in URL")
+    if owner in (".", "..") or repository in (".", ".."):
+        raise LogError("Invalid GitHub owner or repository in URL")
+    safe_url = "https://github.com/" + owner + "/" + repository + "/" + "/".join(parts[2:])
+    if len(parts) == 3:
+        return {"repository": owner + "/" + repository, "kind": "page", "url": safe_url}
+    if len(parts) == 5 and parts[3] == "runs" and parts[4].isdigit():
+        return {"repository": owner + "/" + repository, "kind": "run", "run_id": parts[4], "url": safe_url}
+    if (len(parts) == 7 and parts[3] == "runs" and parts[4].isdigit()
+            and parts[5] == "job" and parts[6].isdigit()):
+        return {"repository": owner + "/" + repository, "kind": "job", "run_id": parts[4],
+                "job_id": parts[6], "url": safe_url}
+    raise LogError("URL must point to /actions, /actions/runs/RUN_ID, or /actions/runs/RUN_ID/job/JOB_ID")
+
+
+def _gh_result(args, timeout=60):
+    executable = shutil.which("gh")
+    if not executable:
+        raise LogError("GitHub Actions links require the GitHub CLI (gh) on PATH")
+    result = subprocess.run([executable, *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            timeout=timeout, check=False)
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", "replace").strip()
+        raise LogError("gh " + " ".join(args[:3]) + " failed" + (": " + detail[:1000] if detail else ""))
+    return result.stdout
+
+
+def fetch_github_log(url, directory):
+    """Use gh with argument arrays (never a shell) and stream logs to a temp file."""
+    target = parse_github_actions_url(url)
+    selection = "direct_link"
+    if target["kind"] == "page":
+        try:
+            rows = json.loads(_gh_result(["run", "list", "--repo", target["repository"], "--limit", "20",
+                                         "--json", "databaseId,status,conclusion,createdAt,headBranch,name"]))
+        except (ValueError, TypeError) as exc:
+            raise LogError("gh returned invalid workflow-run data") from exc
+        if not isinstance(rows, list):
+            raise LogError("gh returned invalid workflow-run data")
+        if not rows:
+            raise LogError("No workflow runs were found for " + target["repository"])
+        selected = next((row for row in rows if isinstance(row, dict) and row.get("conclusion") == "failure"), rows[0])
+        if not isinstance(selected, dict):
+            raise LogError("gh returned invalid workflow-run data")
+        run_id = selected.get("databaseId")
+        if not isinstance(run_id, (int, str)) or not str(run_id).isdigit():
+            raise LogError("gh did not provide a valid workflow-run ID")
+        target["run_id"] = str(run_id)
+        selection = "most_recent_failed" if selected.get("conclusion") == "failure" else "most_recent"
+        target["kind"] = "run"
+        target["run"] = {key: selected.get(key) for key in
+                          ("status", "conclusion", "createdAt", "headBranch", "name")}
+    target["resolved_url"] = "https://github.com/" + target["repository"] + "/actions/runs/" + target["run_id"]
+    if target.get("job_id"):
+        target["resolved_url"] += "/job/" + target["job_id"]
+    command = ["run", "view", target["run_id"], "--repo", target["repository"]]
+    if target["kind"] == "job":
+        command += ["--job", target["job_id"]]
+    command += ["--log"]
+    path = Path(directory) / "github-actions.log"
+    with path.open("wb") as output:
+        executable = shutil.which("gh")
+        if not executable:
+            raise LogError("GitHub Actions links require the GitHub CLI (gh) on PATH")
+        try:
+            result = subprocess.run([executable, *command], stdout=output, stderr=subprocess.PIPE,
+                                    timeout=180, check=False)
+        except subprocess.TimeoutExpired as exc:
+            raise LogError("Timed out while downloading GitHub Actions logs with gh") from exc
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", "replace").strip()
+        raise LogError("gh " + " ".join(command[:3]) + " failed" + (": " + detail[:1000] if detail else ""))
+    if path.stat().st_size == 0:
+        raise LogError("gh returned an empty GitHub Actions log")
+    target["selection"] = selection
+    target["log_bytes"] = path.stat().st_size
+    return target, path
 
 
 def find_binary(binary=None):
@@ -279,6 +373,25 @@ def serve(client, port=8765):
         server.serve_forever()
 
 
+def analyze_github(client, url, output="json"):
+    """Fetch one Actions log with gh, analyze it, and discard the downloaded file."""
+    with tempfile.TemporaryDirectory(prefix="logsonfire-github-") as directory:
+        target, path = fetch_github_log(url, directory)
+        name = "GitHub Actions " + target["kind"] + " " + target["run_id"]
+        if target.get("job_id"):
+            name += " job " + target["job_id"]
+        report = client.analyze(path, name=name, format="github")
+        report["github_actions"] = target
+        if output == "text":
+            label = "GitHub Actions " + target["kind"] + " " + target["run_id"]
+            if target.get("job_id"):
+                label += " job " + target["job_id"]
+            if target["selection"] != "direct_link":
+                label += " (" + target["selection"].replace("_", " ") + ")"
+            return report, label + "\n" + client.text(report["source_id"])
+        return report, None
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db")
@@ -292,6 +405,9 @@ def main(argv=None):
     run.add_argument("--quiet", action="store_true", help="Suppress live output (which can include secrets)")
     run.add_argument("--output",choices=("json","text"),default=argparse.SUPPRESS)
     run.add_argument("args", nargs=argparse.REMAINDER)
+    github = sub.add_parser("github", help="Fetch and analyze a GitHub Actions page, run, or job URL with gh")
+    github.add_argument("url", help="https://github.com/OWNER/REPO/actions[/runs/RUN_ID[/job/JOB_ID]]")
+    github.add_argument("--output", choices=("json", "text"), default=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
         if args.output not in ("json","text"):
@@ -299,6 +415,13 @@ def main(argv=None):
         client = Client(args.db, args.binary)
         if args.command == "serve":
             serve(client, args.port)
+            return 0
+        if args.command == "github":
+            report, text = analyze_github(client, args.url, args.output)
+            if args.output == "text":
+                sys.stdout.buffer.write(text.encode("utf-8"))
+            else:
+                print(json.dumps(report, ensure_ascii=False, separators=(",", ":")))
             return 0
         command = args.args[1:] if args.args[:1] == ["--"] else args.args
         code, payload = client.capture(command, name=args.name, quiet=args.quiet)

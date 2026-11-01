@@ -61,6 +61,19 @@ class OutputTests(unittest.TestCase):
             self.assertFalse(result.startswith("{"),result)
         self.assertEqual(self.run_cli("--version","--output","text"),"logsonfire "+__version__+"\n")
 
+    def test_full_help_is_agent_readable_json_and_has_text_mode(self):
+        for flag in ("--help", "-h"):
+            payload=json.loads(self.run_cli(flag))
+            self.assertIn("analyze",payload["commands"])
+            self.assertIn("github_actions",payload["agent_commands"])
+            self.assertIn("/v1/context",payload["http_api"]["context"])
+            self.assertIn("source_id",payload["api_response_contract"]["analysis_fields"])
+        env={**os.environ,"LOGSONFIRE_OUTPUT":"text"}
+        self.assertIn("logsonfire",json.loads(self.run_cli("--help",env=env))["name"])
+        text=self.run_cli("--help","--output","text")
+        self.assertIn("Formats: auto, generic, github",text)
+        self.assertIn("logsonfire-agent github",text)
+
     def test_sdk_and_capture_keep_json_under_text_environment(self):
         with patch.dict(os.environ,{"LOGSONFIRE_OUTPUT":"text"}):
             client=Client(binary=BINARY,db=self.db)

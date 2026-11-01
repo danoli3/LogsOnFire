@@ -48,7 +48,7 @@ to install `.deb` or `.rpm` files with dependencies.
 2. Update `VERSION`, `changelog.md`, and release notes, and commit all
    intended release files. Run tests.
 3. Run `python3 tools/version.py --check`. Push a matching `vMAJOR.MINOR.PATCH`
-   tag, optionally with a SemVer pre-release suffix such as `v0.2.0-rc.1`.
+   tag, optionally with a SemVer pre-release suffix such as `v0.2.0-rc.2`.
 4. The workflow verifies the tag, builds/tests all six variants and Homebrew,
    replays the fixture archive, and publishes the assets. Suffixed versions are
    marked as GitHub pre-releases. Published tags/assets must remain immutable.
@@ -61,19 +61,19 @@ checksums and URLs derived from the chosen repository and tag. To generate local
 ```sh
 python3 tools/release_manifests.py \
   --repository YOUR_OWNER/YOUR_REPO \
-  --version 0.2.0-rc.1 \
+  --version 0.2.0-rc.2 \
   --artifacts dist \
   --output dist/manifests \
   --package-id YourPublisher.LogsOnFire \
   --publisher 'Your Publisher'
 ```
 
-The generator requires `logsonfire-0.2.0-rc.1-source.tar.gz` and both Windows ZIPs,
+The generator requires `logsonfire-0.2.0-rc.2-source.tar.gz` and both Windows ZIPs,
 with `bin/logsonfire.exe` in each. The workflow creates the source archive with
 `git archive`; it includes only committed files. `SHA256SUMS` covers release
 packages and source. The release workflow also hashes the final manifests archive
-and standalone formula. Debian pre-release package versions use `~rc.1`, while
-RPM uses a `0.rc.1` release value so candidates sort before stable packages.
+and standalone formula. Debian pre-release package versions use `~rc.2`, while
+RPM uses a `0.rc.2` release value so candidates sort before stable packages.
 
 ## Homebrew
 
