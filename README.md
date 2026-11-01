@@ -3,11 +3,27 @@
 [![Build](https://github.com/danoli3/LogsOnFire/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/danoli3/LogsOnFire/actions/workflows/build.yml)
 [![Unit tests](https://github.com/danoli3/LogsOnFire/actions/workflows/unit-tests.yml/badge.svg?branch=main)](https://github.com/danoli3/LogsOnFire/actions/workflows/unit-tests.yml)
 
-Read a log once. Get a compact explanation, then query the evidence you need.
+Turn noisy build, CI, IDE, device, and crash logs into compact evidence. LogsOnFire
+analyzes text locally, groups repeated diagnostics, and returns JSON for agents or
+a readable report for people. No model call is required.
 
-LogsOnFire analyzes build, CI, device, IDE, and crash **text logs** locally. It
-stores cleaned evidence, groups repeated diagnostics, and returns JSON for AI
-agents or a readable report for people. No model call is required.
+```sh
+# Install the current release candidate from the project tap
+brew tap danoli3/logsonfire https://github.com/danoli3/LogsOnFire.git
+brew install danoli3/logsonfire/logsonfire
+
+# Ask what went wrong
+logsonfire analyze build.log --human
+```
+
+For example, when a CI build cannot find `sqlite3.h`, LogsOnFire points to that
+missing header, its source line, and a check to install the SQLite development
+package. [Try the included GitHub Actions log](examples/github-actions-failed.log)
+or see the [full example and agent workflow](examples/README.md).
+
+The same CLI can return compact JSON for an AI agent with `logsonfire analyze
+build.log`; use `logsonfire-agent run --quiet -- COMMAND ...` to capture a command
+and analyze its output without loading the raw log into the agent's context.
 
 **Build and installation:** [BUILDING.md](BUILDING.md).
 
