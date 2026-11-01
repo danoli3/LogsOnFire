@@ -7,6 +7,11 @@ is established by its GitHub tag/release, not by this file alone.
 
 ## [Unreleased]
 
+### Changed
+
+- Clarified the README's first-use path and added a repository social preview
+  image plus GitHub discovery metadata.
+
 ## [0.2.0-rc.1] - 2026-10-31
 
 ### Added
