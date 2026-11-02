@@ -12,6 +12,14 @@ is established by its GitHub tag/release, not by this file alone.
 - Clarified the README's first-use path and added a repository social preview
   image plus GitHub discovery metadata.
 
+## [0.2.0-rc.3] - 2026-11-02
+
+### Changed
+
+- Confirmed GitHub Actions URL analysis is available through the installed
+  `logsonfire-agent` command when the GitHub CLI (`gh`) is installed and
+  authenticated for the repository.
+
 ## [0.2.0-rc.2] - 2026-11-02
 
 ### Added
